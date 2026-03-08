@@ -38,7 +38,7 @@ function parseBirthTime(value: string | null) {
 }
 
 export default function CalculationsPage() {
-    const API = process.env.NEXT_PUBLIC_ASTRO_API_BASE || "http://127.0.0.1:8011";
+    const API = process.env.NEXT_PUBLIC_ASTRO_API_BASE?.trim() || "http://127.0.0.1:8011";
 
     const [profileLoading, setProfileLoading] = useState(true);
     const [profileError, setProfileError] = useState<string | null>(null);
@@ -94,7 +94,14 @@ export default function CalculationsPage() {
     }, []);
 
     async function callJson(url: string) {
-        const res = await fetch(url, { method: "GET" });
+        let res: Response;
+
+        try {
+            res = await fetch(url, { method: "GET" });
+        } catch {
+            throw new Error("Сервис расчётов временно недоступен. Проверьте подключение к API и попробуйте ещё раз.");
+        }
+
         const json = await res.json().catch(() => null);
         if (!res.ok) {
             // FastAPI обычно отдаёт { detail: "..." }
@@ -259,6 +266,13 @@ export default function CalculationsPage() {
                         {profileError
                             ? `Не удалось загрузить профиль: ${profileError}`
                             : `Чтобы открыть расчёты, сначала заполните в профиле: ${missingFields.join(", ")}.`}
+                    </div>
+                )}
+
+
+                {API === "http://127.0.0.1:8011" && (
+                    <div style={{ marginTop: 10, color: "rgba(245,240,233,.60)", fontSize: 12 }}>
+                        Используется локальный API ({API}). Если расчёт не запускается, проверьте, что backend доступен.
                     </div>
                 )}
 
