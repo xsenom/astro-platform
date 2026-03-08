@@ -14,14 +14,19 @@ function supabaseErrorRu(message: string) {
     if (m.includes("password should be at least")) return "Пароль слишком короткий. Минимум 6 символов.";
     if (m.includes("invalid email")) return "Некорректный email.";
     if (m.includes("signup is disabled")) return "Регистрация временно отключена.";
-    if (m.includes("too many requests")) return "Слишком много попыток. Попробуйте позже.";
-    if (m.includes("rate limit")) return "Слишком много попыток. Попробуйте позже.";
+    if (m.includes("too many requests") || m.includes("rate limit")) {
+        return "Слишком много попыток. Попробуйте позже.";
+    }
 
     if (m.includes("email rate limit exceeded")) return "Слишком много писем. Попробуйте позже.";
     if (m.includes("user not found")) return "Пользователь не найден.";
+    if (m.includes("database error querying schema")) {
+        return "Ошибка базы данных при авторизации. Попробуйте ещё раз позже.";
+    }
+    if (m.includes("database error")) return "Ошибка базы данных. Попробуйте ещё раз позже.";
     if (m.includes("invalid") && m.includes("email")) return "Некорректный email.";
 
-    return `Ошибка: ${message}`;
+    return "Произошла внутренняя ошибка сервиса авторизации. Попробуйте ещё раз позже.";
 }
 
 function EyeIcon({ open }: { open: boolean }) {
@@ -181,7 +186,9 @@ export default function LoginPage() {
         setMsg(null);
         setLoading(true);
 
-        const { error } = await supabase.auth.resetPasswordForEmail(email);
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: `${window.location.origin}/reset-password`,
+        });
 
         setLoading(false);
 
