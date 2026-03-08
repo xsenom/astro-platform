@@ -22,379 +22,15 @@ type AstroConstellation = {
     edges: Array<[number, number]>;
 };
 
-type PlanetKind =
-    | "mercury"
-    | "venus"
-    | "earth"
-    | "mars"
-    | "jupiter"
-    | "saturn"
-    | "uranus"
-    | "neptune";
-
-type Planet = {
-    kind: PlanetKind;
-    x: number;
-    y: number;
-    r: number;
-    a: number; // alpha base
-    vx: number;
-    vy: number;
-    tw: number; // twinkle/variation speed
-    seed: number;
-
-    // NEW: вращение
-    spin: number; // текущий угол
-    spinV: number; // скорость вращения (rad/sec)
-};
-
 function clamp01(v: number) {
     return Math.max(0, Math.min(1, v));
 }
+
 function smootherstep(t: number) {
     t = clamp01(t);
     return t * t * t * (t * (t * 6 - 15) + 10);
 }
-function rand01(seed: number) {
-    const x = Math.sin(seed) * 10000;
-    return x - Math.floor(x);
-}
-function hash(seed: number, k: number) {
-    return seed * 374761393 + k * 668265263;
-}
 
-function drawCircleClip(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    r: number,
-    fn: () => void
-) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.clip();
-    fn();
-    ctx.restore();
-}
-
-function drawSaturnRing(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    r: number,
-    alpha: number
-) {
-    const ringRx = r * 1.9;
-    const ringRy = r * 0.62;
-    const tilt = -0.35;
-
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(tilt);
-
-    ctx.globalCompositeOperation = "lighter";
-
-    // back arc
-    ctx.lineWidth = Math.max(1.2, r * 0.1);
-    ctx.strokeStyle = `rgba(220, 205, 170, ${alpha * 0.16})`;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, ringRx, ringRy, 0, Math.PI, 0, true);
-    ctx.stroke();
-
-    // inner
-    ctx.lineWidth = Math.max(0.9, r * 0.07);
-    ctx.strokeStyle = `rgba(200, 180, 140, ${alpha * 0.12})`;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, ringRx * 0.78, ringRy * 0.78, 0, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.restore();
-}
-
-// ----------------------
-// Цвет планеты + сила оттенка
-// ----------------------
-function planetTint(kind: PlanetKind) {
-    switch (kind) {
-        case "mars":
-            return { rgb: "255, 90, 70", strength: 1.0 };
-        case "venus":
-            return { rgb: "255, 205, 120", strength: 0.7 };
-        case "earth":
-            return { rgb: "120, 210, 255", strength: 0.85 };
-        case "jupiter":
-            return { rgb: "255, 210, 160", strength: 0.55 };
-        case "saturn":
-            return { rgb: "230, 215, 170", strength: 0.55 };
-        case "uranus":
-            return { rgb: "140, 255, 255", strength: 0.7 };
-        case "neptune":
-            return { rgb: "90, 140, 255", strength: 0.85 };
-        case "mercury":
-        default:
-            return { rgb: "210, 205, 195", strength: 0.25 };
-    }
-}
-
-// ----------------------
-// Offscreen sprites cache (теперь спрайт = “поверхность”, без блика/тени)
-// ----------------------
-type SpriteCacheEntry = { canvas: HTMLCanvasElement; usedAt: number };
-const planetSpriteCache = new Map<string, SpriteCacheEntry>();
-
-function getPlanetSurfaceSprite(p: Planet) {
-    const key = `${p.kind}:${Math.round(p.r)}:${p.seed}`;
-    const hit = planetSpriteCache.get(key);
-    if (hit) {
-        hit.usedAt = performance.now();
-        return hit.canvas;
-    }
-
-    const r = p.r;
-    const tint = planetTint(p.kind);
-
-    const size = Math.max(96, Math.ceil(r * 5.0)); // запас чтобы blur не обрезался
-    const c = document.createElement("canvas");
-    c.width = size;
-    c.height = size;
-
-    const ctx = c.getContext("2d");
-    if (!ctx) return c;
-
-    const cx = size / 2;
-    const cy = size / 2;
-
-    ctx.clearRect(0, 0, size, size);
-    ctx.save();
-    ctx.translate(cx, cy);
-
-    // поверхность в клипе (без блика и терминатора — их нарисуем сверху, фиксировано к “Солнцу”)
-    drawCircleClip(ctx, 0, 0, r, () => {
-        // базовый цвет/объём (мягкий)
-        const base = ctx.createRadialGradient(
-            -r * 0.35,
-            -r * 0.25,
-            r * 0.15,
-            0,
-            0,
-            r * 1.25
-        );
-        base.addColorStop(0, "rgba(255, 250, 238, 1)");
-        base.addColorStop(0.6, "rgba(245, 224, 185, 1)");
-        base.addColorStop(1, "rgba(120, 105, 80, 1)");
-        ctx.fillStyle = base;
-        ctx.fillRect(-r, -r, r * 2, r * 2);
-
-        // полосы/мрамор
-        ctx.save();
-        ctx.globalCompositeOperation = "soft-light";
-        ctx.filter = `blur(${Math.max(1.5, r * 0.1)}px)`;
-
-        const bandCount =
-            p.kind === "jupiter"
-                ? 12
-                : p.kind === "saturn"
-                    ? 10
-                    : p.kind === "neptune"
-                        ? 9
-                        : p.kind === "uranus"
-                            ? 9
-                            : 7;
-
-        for (let i = 0; i < bandCount; i++) {
-            const s = hash(p.seed, 3000 + i);
-            const yy = -r + (i / (bandCount - 1)) * (r * 2);
-            const hh = r * (0.16 + rand01(s) * 0.12);
-            const wobble = (rand01(s + 17) * 2 - 1) * r * 0.1;
-
-            const a1 = 0.08 + rand01(s + 33) * 0.1;
-            ctx.fillStyle = `rgba(255,255,255,${a1})`;
-            ctx.fillRect(-r, yy - hh * 0.5 + wobble, r * 2, hh);
-
-            const a2 = 0.05 + rand01(s + 55) * 0.09;
-            ctx.fillStyle = `rgba(30,35,45,${a2})`;
-            ctx.fillRect(-r, yy - hh * 0.35 + wobble * 0.6, r * 2, hh * 0.75);
-        }
-
-        ctx.globalCompositeOperation = "overlay";
-        for (let k = 0; k < Math.max(26, Math.floor(r * 1.2)); k++) {
-            const s = hash(p.seed, 4000 + k);
-            const px = (rand01(s) * 2 - 1) * r;
-            const py = (rand01(s + 11) * 2 - 1) * r;
-            const pr = r * (0.08 + rand01(s + 21) * 0.22);
-            const pa = 0.04 + rand01(s + 31) * 0.07;
-            ctx.fillStyle = `rgba(255,255,255,${pa})`;
-            ctx.beginPath();
-            ctx.ellipse(
-                px,
-                py,
-                pr * 1.2,
-                pr * 0.8,
-                rand01(s + 41) * Math.PI,
-                0,
-                Math.PI * 2
-            );
-            ctx.fill();
-        }
-
-        ctx.filter = "none";
-        ctx.restore();
-
-        // цветовой тинт
-        ctx.save();
-        ctx.globalCompositeOperation = "soft-light";
-        const tintG = ctx.createRadialGradient(
-            -r * 0.35,
-            -r * 0.25,
-            r * 0.1,
-            0,
-            0,
-            r * 1.35
-        );
-        tintG.addColorStop(0, `rgba(${tint.rgb}, ${0.4 * tint.strength})`);
-        tintG.addColorStop(1, `rgba(${tint.rgb}, 0)`);
-        ctx.fillStyle = tintG;
-        ctx.fillRect(-r, -r, r * 2, r * 2);
-        ctx.restore();
-
-        // мягкий край (альфа-фейд)
-        ctx.save();
-        ctx.globalCompositeOperation = "destination-in";
-        const edge = ctx.createRadialGradient(0, 0, r * 0.7, 0, 0, r * 1.06);
-        edge.addColorStop(0, "rgba(255,255,255,1)");
-        edge.addColorStop(0.8, "rgba(255,255,255,1)");
-        edge.addColorStop(1, "rgba(255,255,255,0)");
-        ctx.fillStyle = edge;
-        ctx.beginPath();
-        ctx.arc(0, 0, r * 1.06, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-    });
-
-    ctx.restore();
-
-    planetSpriteCache.set(key, { canvas: c, usedAt: performance.now() });
-
-    // уборка кэша
-    if (planetSpriteCache.size > 64) {
-        const arr = [...planetSpriteCache.entries()].sort(
-            (a, b) => a[1].usedAt - b[1].usedAt
-        );
-        for (let i = 0; i < 16; i++) planetSpriteCache.delete(arr[i][0]);
-    }
-
-    return c;
-}
-
-// фиксированный свет/тень (как будто “я — Солнце слева-сверху”)
-function drawPlanetLighting(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    r: number,
-    alpha: number
-) {
-    // блик слева-сверху
-    ctx.save();
-    ctx.globalCompositeOperation = "screen";
-    ctx.globalAlpha = alpha;
-    const hl = ctx.createRadialGradient(
-        x - r * 0.55,
-        y - r * 0.4,
-        0,
-        x - r * 0.55,
-        y - r * 0.4,
-        r * 1.25
-    );
-    hl.addColorStop(0, "rgba(255,255,255,0.25)");
-    hl.addColorStop(0.45, "rgba(255,255,255,0.12)");
-    hl.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = hl;
-    ctx.beginPath();
-    ctx.arc(x, y, r * 1.05, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // терминатор справа (тень)
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.globalAlpha = alpha;
-    const term = ctx.createRadialGradient(
-        x + r * 0.85,
-        y + r * 0.05,
-        r * 0.15,
-        x + r * 0.85,
-        y + r * 0.05,
-        r * 1.55
-    );
-    term.addColorStop(0, "rgba(0,0,0,0)");
-    term.addColorStop(0.55, "rgba(0,0,0,0.35)");
-    term.addColorStop(1, "rgba(0,0,0,0.70)");
-    ctx.fillStyle = term;
-    ctx.beginPath();
-    ctx.arc(x, y, r * 1.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-}
-
-// планета: вращаем поверхность, свет остаётся
-function drawPlanet(ctx: CanvasRenderingContext2D, p: Planet, t: number) {
-    const { x, y, r } = p;
-
-    const tw = 0.92 + 0.08 * Math.sin(t * p.tw + p.seed * 0.0008);
-    const alpha = clamp01(p.a * tw);
-
-    const tint = planetTint(p.kind);
-    const sprite = getPlanetSurfaceSprite(p);
-    const size = sprite.width;
-
-    // 1) диск поверхности (вращаем)
-    ctx.save();
-    ctx.globalCompositeOperation = "source-over";
-    ctx.globalAlpha = alpha;
-
-    const diskBlur = Math.max(1.0, r * 0.1);
-    ctx.filter = `blur(${diskBlur}px)`;
-
-    ctx.translate(x, y);
-    ctx.rotate(p.spin);
-    ctx.drawImage(sprite, -size / 2, -size / 2);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-    ctx.filter = "none";
-    ctx.restore();
-
-    // 2) свет/тень (фиксированные)
-    drawPlanetLighting(ctx, x, y, r, alpha);
-
-    // 3) кольца Сатурна (не вращаем поверхность колец вместе с планетой)
-    if (p.kind === "saturn") {
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        drawSaturnRing(ctx, x, y, r, 1);
-        ctx.restore();
-    }
-
-    // 4) glow
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    ctx.globalAlpha = alpha * (0.55 + 0.25 * tint.strength);
-    ctx.filter = `blur(${Math.max(10, r * 0.85)}px)`;
-
-    const glowR = r * 1.65;
-    const g = ctx.createRadialGradient(x, y, r * 0.38, x, y, glowR);
-    g.addColorStop(0, `rgba(${tint.rgb}, ${0.24 * tint.strength})`);
-    g.addColorStop(0.55, `rgba(${tint.rgb}, ${0.14 * tint.strength})`);
-    g.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(x, y, glowR, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.filter = "none";
-    ctx.restore();
-}
 
 export default function AstroBackdrop() {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -427,7 +63,6 @@ export default function AstroBackdrop() {
         const prefersReduce =
             window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
 
-        const PLANET_SPEED_MULT = prefersReduce ? 0.55 : 1.0;
         const STAR_DRIFT_MULT = prefersReduce ? 0.35 : 1.0;
 
         const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
@@ -444,13 +79,6 @@ export default function AstroBackdrop() {
             canvas.style.height = `${h}px`;
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-            if (planetSpriteCache.size > 32) {
-                const arr = [...planetSpriteCache.entries()].sort(
-                    (a, b) => a[1].usedAt - b[1].usedAt
-                );
-                for (let i = 0; i < Math.min(16, arr.length); i++)
-                    planetSpriteCache.delete(arr[i][0]);
-            }
         };
 
         resize();
@@ -548,132 +176,6 @@ export default function AstroBackdrop() {
         };
 
         // ----------------------
-        // planets: слева -> направо + вращение
-        // ----------------------
-        const order: PlanetKind[] = [
-            "mercury",
-            "venus",
-            "earth",
-            "mars",
-            "jupiter",
-            "saturn",
-            "uranus",
-            "neptune",
-        ];
-        const planetCount = Math.max(6, Math.min(10, Math.floor((w * h) / 220000) + 6));
-
-        const planets: Planet[] = Array.from({ length: planetCount }, (_, i) => {
-            const kind = order[i % order.length];
-
-            const baseR =
-                kind === "jupiter"
-                    ? 26
-                    : kind === "saturn"
-                        ? 24
-                        : kind === "uranus"
-                            ? 20
-                            : kind === "neptune"
-                                ? 20
-                                : kind === "earth"
-                                    ? 18
-                                    : kind === "venus"
-                                        ? 18
-                                        : kind === "mars"
-                                            ? 16
-                                            : 14;
-
-            const r = baseR + Math.random() * 12;
-
-            const speedBase =
-                kind === "neptune" || kind === "uranus"
-                    ? 0.02
-                    : kind === "saturn"
-                        ? 0.024
-                        : kind === "jupiter"
-                            ? 0.026
-                            : 0.03;
-
-            const vx = (speedBase + Math.random() * 0.02) * PLANET_SPEED_MULT;
-
-            // скорость вращения поверхности (rad/sec)
-            const spinBase =
-                kind === "jupiter"
-                    ? 0.9
-                    : kind === "saturn"
-                        ? 0.75
-                        : kind === "mars"
-                            ? 1.1
-                            : kind === "mercury"
-                                ? 0.6
-                                : 0.85;
-
-            const spinV = (spinBase + Math.random() * 0.6) * (prefersReduce ? 0.7 : 1);
-
-            const pos = randomOutsideSafe();
-            const stagger = (i / Math.max(1, planetCount - 1)) * w;
-            const startX = -r * (3 + Math.random() * 8) + stagger * 0.25;
-
-            return {
-                kind,
-                x: startX,
-                y: pos.y,
-                r,
-                a: 0.34,
-                vx,
-                vy: (Math.random() * 2 - 1) * 0.03,
-                tw: 0.06 + Math.random() * 0.14,
-                seed: 1000 + i * 777,
-                spin: Math.random() * Math.PI * 2,
-                spinV,
-            };
-        });
-
-        const keepOutsideSafe = (p: Planet) => {
-            const safe = safeZone();
-            const inside = p.x > safe.x1 && p.x < safe.x2 && p.y > safe.y1 && p.y < safe.y2;
-            if (!inside) return;
-
-            const dxLeft = Math.abs(p.x - safe.x1);
-            const dxRight = Math.abs(safe.x2 - p.x);
-            const dyTop = Math.abs(p.y - safe.y1);
-            const dyBottom = Math.abs(safe.y2 - p.y);
-            const m = Math.min(dxLeft, dxRight, dyTop, dyBottom);
-
-            if (m === dxLeft) p.x = safe.x1 - p.r - 22;
-            else if (m === dxRight) p.x = safe.x2 + p.r + 22;
-            else if (m === dyTop) p.y = safe.y1 - p.r - 22;
-            else p.y = safe.y2 + p.r + 22;
-        };
-
-        // dt-based обновление
-        const driftPlanets = (t: number, dt: number) => {
-            for (const p of planets) {
-                p.x += p.vx * (dt * 60); // сохраняем “ощущение” твоих скоростей, но через dt
-                p.spin += p.spinV * dt;
-
-                p.y += Math.sin(t * 0.18 + p.seed * 0.01) * 0.06 + p.vy * (dt * 60);
-
-                const top = p.r * 1.6;
-                const bottom = h - p.r * 1.6;
-                if (p.y < top) p.y = top;
-                if (p.y > bottom) p.y = bottom;
-
-                keepOutsideSafe(p);
-
-                const margin = p.r * 6;
-                if (p.x > w + margin) {
-                    p.x = -margin;
-                    p.y = randomOutsideSafe().y;
-                }
-            }
-        };
-
-        const drawPlanets = (t: number) => {
-            const sorted = [...planets].sort((a, b) => a.r - b.r);
-            for (const p of sorted) drawPlanet(ctx, p, t);
-        };
-
-        // ----------------------
         // constellations
         // ----------------------
         let active = constellations[Math.floor(Math.random() * constellations.length)];
@@ -755,21 +257,15 @@ export default function AstroBackdrop() {
         };
 
         // ----------------------
-        // tick (dt based)
+        // tick
         // ----------------------
-        let lastMs = performance.now();
-
         const tick = (ms: number) => {
             const t = ms / 1000;
-            const dt = Math.min(0.05, (ms - lastMs) / 1000); // clamp на всякий
-            lastMs = ms;
 
             ctx.clearRect(0, 0, w, h);
             drawBackgroundGlow();
             drawStars(t);
 
-            driftPlanets(t, dt);
-            drawPlanets(t);
 
             drawConstellation(ms);
 
@@ -786,5 +282,4 @@ export default function AstroBackdrop() {
 
     return <canvas ref={canvasRef} className="astroBackdrop" aria-hidden="true" />;
 }
-
 
