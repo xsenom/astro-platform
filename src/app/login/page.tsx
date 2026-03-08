@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase/client";
 
 type Mode = "signin" | "signup" | "reset";
 
-function supabaseErrorRu(message: string) {
+function supabaseErrorRu(message: string, context: "signin" | "signup" | "reset" = "signin") {
     const m = (message || "").toLowerCase().trim();
 
     if (m.includes("invalid login credentials")) return "Неверный email или пароль.";
@@ -14,20 +14,38 @@ function supabaseErrorRu(message: string) {
     if (m.includes("password should be at least")) return "Пароль слишком короткий. Минимум 6 символов.";
     if (m.includes("invalid email")) return "Некорректный email.";
     if (m.includes("signup is disabled")) return "Регистрация временно отключена.";
+
     if (m.includes("too many requests") || m.includes("rate limit")) {
         return "Слишком много попыток. Попробуйте позже.";
     }
 
     if (m.includes("email rate limit exceeded")) return "Слишком много писем. Попробуйте позже.";
     if (m.includes("user not found")) return "Пользователь не найден.";
+
     if (m.includes("database error querying schema")) {
-        return "Ошибка базы данных при авторизации. Попробуйте ещё раз позже.";
+        return "Ошибка запроса к базе данных. Проверьте настройки Supabase (схема/права доступа) и повторите попытку.";
     }
-    if (m.includes("database error")) return "Ошибка базы данных. Попробуйте ещё раз позже.";
+    if (m.includes("database error")) {
+        return "Ошибка базы данных. Проверьте подключение и права доступа в Supabase.";
+    }
+
+    if (context === "reset") {
+        if (m.includes("redirect") && (m.includes("invalid") || m.includes("not allowed"))) {
+            return "Ссылка для сброса отклонена. Добавьте URL сброса пароля в Supabase Auth → URL Configuration.";
+        }
+        if (m.includes("email") && m.includes("not confirmed")) {
+            return "Email не подтверждён. Подтвердите почту и повторите сброс.";
+        }
+        if (m.includes("smtp") || m.includes("send") || m.includes("email") || m.includes("mailer")) {
+            return "Не удалось отправить письмо. Проверьте SMTP и Email settings в Supabase.";
+        }
+    }
+
     if (m.includes("invalid") && m.includes("email")) return "Некорректный email.";
 
-    return "Произошла внутренняя ошибка сервиса авторизации. Попробуйте ещё раз позже.";
+    return "Произошла внутренняя ошибка сервиса авторизации. Проверьте настройки Supabase и попробуйте ещё раз позже.";
 }
+
 
 function EyeIcon({ open }: { open: boolean }) {
     return open ? (
@@ -150,7 +168,8 @@ export default function LoginPage() {
         setLoading(false);
 
         if (error) {
-            setMsg(`Ошибка входа: ${supabaseErrorRu(error.message)}`);
+            console.error("[auth:signin]", error);
+            setMsg(`Ошибка входа: ${supabaseErrorRu(error.message, "signin")}`);
             return;
         }
 
@@ -170,7 +189,8 @@ export default function LoginPage() {
         setLoading(false);
 
         if (error) {
-            setMsg(`Ошибка регистрации: ${supabaseErrorRu(error.message)}`);
+            console.error("[auth:signup]", error);
+            setMsg(`Ошибка регистрации: ${supabaseErrorRu(error.message, "signup")}`);
             return;
         }
 
@@ -193,7 +213,8 @@ export default function LoginPage() {
         setLoading(false);
 
         if (error) {
-            setMsg(`Ошибка сброса пароля: ${supabaseErrorRu(error.message)}`);
+            console.error("[auth:reset]", error);
+            setMsg(`Ошибка сброса пароля: ${supabaseErrorRu(error.message, "reset")}`);
             return;
         }
 
