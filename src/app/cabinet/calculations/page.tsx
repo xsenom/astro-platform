@@ -6,10 +6,10 @@ import { supabase } from "@/lib/supabase/client";
 type CalcKind = "natal" | "day" | "week" | "month";
 
 type ApiResult =
-    | { kind: "natal"; text: string; meta?: unknown }
-    | { kind: "day"; text: string; raw?: unknown }
-    | { kind: "week"; text: string; raw?: unknown }
-    | { kind: "month"; text: string; raw?: unknown };
+    | { kind: "natal"; text: string; meta?: any }
+    | { kind: "day"; text: string; raw?: any }
+    | { kind: "week"; text: string; raw?: any }
+    | { kind: "month"; text: string; raw?: any };
 
 type BirthProfile = {
     birth_date: string | null;
@@ -17,9 +17,29 @@ type BirthProfile = {
     birth_city: string | null;
 };
 
-type CalcAccessOrder = {
+type ProductRow = {
+    code: CalcKind;
+    title: string;
+    description: string | null;
+    price_rub: number;
+    is_free: boolean;
+    is_active: boolean;
+    payment_url: string | null;
+    sort_order: number;
+};
+
+type AccessRow = {
+    product_code: CalcKind;
+};
+
+type SavedCalculationRow = {
     id: string;
-    meta: Record<string, unknown> | null;
+    kind: CalcKind;
+    target_date: string | null;
+    result_text: string;
+    result_json: any;
+    input_params: any;
+    updated_at: string;
 };
 
 function pad2(n: number) {
@@ -41,37 +61,79 @@ function parseBirthTime(value: string | null) {
     if (!value) return null;
     const [h, min] = value.split(":").map((x) => Number.parseInt(x, 10));
     if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
-    return { hour: String(h).padStart(2, "0"), minute: String(min).padStart(2, "0") };
+    return {
+        hour: String(h).padStart(2, "0"),
+        minute: String(min).padStart(2, "0"),
+    };
 }
 
-function modeTitle(kind: CalcKind) {
-    if (kind === "natal") return "Натальная карта";
-    if (kind === "day") return "Прогноз на день";
-    if (kind === "week") return "Прогноз на неделю";
-    return "Прогноз на месяц";
-}
+const loadingLabels: Record<CalcKind, string[]> = {
+    natal: [
+        "Строим натальную карту",
+        "Собираем положения планет",
+        "Формируем интерпретацию",
+    ],
+    day: [
+        "Считаем прогноз на день",
+        "Анализируем транзиты",
+        "Собираем рекомендации",
+    ],
+    week: [
+        "Считаем прогноз на неделю",
+        "Выделяем основные темы периода",
+        "Формируем итоговый текст",
+    ],
+    month: [
+        "Считаем прогноз на месяц",
+        "Анализируем благоприятные периоды",
+        "Собираем итоговый результат",
+    ],
+};
 
 export default function CalculationsPage() {
-    const API = process.env.NEXT_PUBLIC_ASTRO_API_BASE?.trim() || "http://127.0.0.1:8011";
+    const API =
+        process.env.NEXT_PUBLIC_ASTRO_API_BASE?.trim() || "http://127.0.0.1:8011";
 
     const [profileLoading, setProfileLoading] = useState(true);
     const [profileError, setProfileError] = useState<string | null>(null);
     const [profile, setProfile] = useState<BirthProfile | null>(null);
 
-    const [checkingAccess, setCheckingAccess] = useState(true);
-    const [hasPaidAccess, setHasPaidAccess] = useState(false);
-    const [paidOrder, setPaidOrder] = useState<CalcAccessOrder | null>(null);
+    const [userId, setUserId] = useState<string | null>(null);
+
+    const [products, setProducts] = useState<ProductRow[]>([]);
+    const [accessMap, setAccessMap] = useState<Record<CalcKind, boolean>>({
+        natal: true,
+        day: false,
+        week: false,
+        month: false,
+    });
+
+    const [savedMap, setSavedMap] = useState<
+        Partial<Record<CalcKind, SavedCalculationRow>>
+    >({});
 
     const [loading, setLoading] = useState(false);
-    const [loadingKind, setLoadingKind] = useState<CalcKind | null>(null);
-    const [payLoading, setPayLoading] = useState(false);
+    const [activeKind, setActiveKind] = useState<CalcKind | null>(null);
+    const [loadingStep, setLoadingStep] = useState(0);
+
     const [err, setErr] = useState<string | null>(null);
     const [result, setResult] = useState<ApiResult | null>(null);
+    const [resultMeta, setResultMeta] = useState<{
+        source: "saved" | "fresh" | null;
+        updatedAt?: string | null;
+    }>({ source: null, updatedAt: null });
 
     const targetDate = toYMD(new Date());
 
-    const dateParts = useMemo(() => parseBirthDate(profile?.birth_date ?? null), [profile?.birth_date]);
-    const timeParts = useMemo(() => parseBirthTime(profile?.birth_time ?? null), [profile?.birth_time]);
+    const dateParts = useMemo(
+        () => parseBirthDate(profile?.birth_date ?? null),
+        [profile?.birth_date]
+    );
+
+    const timeParts = useMemo(
+        () => parseBirthTime(profile?.birth_time ?? null),
+        [profile?.birth_time]
+    );
 
     const missingFields = useMemo(() => {
         const missing: string[] = [];
@@ -81,173 +143,124 @@ export default function CalculationsPage() {
         return missing;
     }, [dateParts, timeParts, profile?.birth_city]);
 
-    const canRunBirth = missingFields.length === 0;
+    const canRun = missingFields.length === 0;
 
     useEffect(() => {
-        (async () => {
-            setProfileLoading(true);
-            setProfileError(null);
+        if (!loading || !activeKind) return;
 
-            try {
-                const { data: userData, error: userErr } = await supabase.auth.getUser();
-                if (userErr || !userData.user) {
-                    window.location.href = "/login";
-                    return;
-                }
+        setLoadingStep(0);
 
-                const { data, error } = await supabase
-                    .from("profiles")
-                    .select("birth_date, birth_time, birth_city")
-                    .eq("id", userData.user.id)
-                    .maybeSingle();
+        const timer = window.setInterval(() => {
+            setLoadingStep((prev) => (prev + 1) % loadingLabels[activeKind].length);
+        }, 1300);
 
-                if (error) {
-                    setProfileError(error.message);
-                    return;
-                }
-
-                setProfile((data ?? null) as BirthProfile | null);
-            } finally {
-                setProfileLoading(false);
-            }
-        })();
-    }, []);
+        return () => window.clearInterval(timer);
+    }, [loading, activeKind]);
 
     useEffect(() => {
-        void refreshPaidAccess();
+        void bootstrap();
     }, []);
 
-    async function refreshPaidAccess() {
-        setCheckingAccess(true);
+    async function bootstrap() {
+        setProfileLoading(true);
+        setProfileError(null);
+
         try {
-            const { data: userData } = await supabase.auth.getUser();
-            const user = userData.user;
-            if (!user) {
-                setHasPaidAccess(false);
-                setPaidOrder(null);
+            const { data: userData, error: userErr } = await supabase.auth.getUser();
+
+            if (userErr || !userData.user) {
+                window.location.href = "/login";
                 return;
             }
 
-            const { data } = await supabase
-                .from("orders")
-                .select("id, meta")
-                .eq("user_id", user.id)
-                .eq("kind", "calc_access")
-                .or("status.eq.paid,paid_at.not.is.null")
-                .order("created_at", { ascending: false })
-                .limit(1)
-                .maybeSingle();
+            const uid = userData.user.id;
+            setUserId(uid);
 
-            if (data?.id) {
-                setHasPaidAccess(true);
-                setPaidOrder({
-                    id: data.id as string,
-                    meta: (data.meta as Record<string, unknown> | null) ?? null,
-                });
+            const [
+                profileResp,
+                productsResp,
+                accessResp,
+                savedResp,
+            ] = await Promise.all([
+                supabase
+                    .from("profiles")
+                    .select("birth_date, birth_time, birth_city")
+                    .eq("id", uid)
+                    .maybeSingle(),
+                supabase
+                    .from("calculation_products")
+                    .select("code, title, description, price_rub, is_free, is_active, payment_url, sort_order")
+                    .eq("is_active", true)
+                    .order("sort_order", { ascending: true }),
+                supabase
+                    .from("user_calculation_access")
+                    .select("product_code")
+                    .eq("user_id", uid),
+                supabase
+                    .from("saved_calculations")
+                    .select("id, kind, target_date, result_text, result_json, input_params, updated_at")
+                    .eq("user_id", uid)
+                    .order("updated_at", { ascending: false }),
+            ]);
+
+            if (profileResp.error) {
+                setProfileError(profileResp.error.message);
             } else {
-                setHasPaidAccess(false);
-                setPaidOrder(null);
+                setProfile((profileResp.data ?? null) as BirthProfile | null);
             }
+
+            if (!productsResp.error) {
+                setProducts((productsResp.data ?? []) as ProductRow[]);
+            }
+
+            const nextAccess: Record<CalcKind, boolean> = {
+                natal: true,
+                day: false,
+                week: false,
+                month: false,
+            };
+
+            const productRows = (productsResp.data ?? []) as ProductRow[];
+            for (const p of productRows) {
+                if (p.is_free) {
+                    nextAccess[p.code] = true;
+                }
+            }
+
+            const accessRows = (accessResp.data ?? []) as AccessRow[];
+            for (const row of accessRows) {
+                nextAccess[row.product_code] = true;
+            }
+
+            setAccessMap(nextAccess);
+
+            const rows = (savedResp.data ?? []) as SavedCalculationRow[];
+            const nextSaved: Partial<Record<CalcKind, SavedCalculationRow>> = {};
+
+            for (const row of rows) {
+                if (row.kind === "day") {
+                    if (row.target_date === targetDate && !nextSaved.day) {
+                        nextSaved.day = row;
+                    }
+                    continue;
+                }
+                if (!nextSaved[row.kind]) {
+                    nextSaved[row.kind] = row;
+                }
+            }
+
+            setSavedMap(nextSaved);
         } finally {
-            setCheckingAccess(false);
+            setProfileLoading(false);
         }
     }
 
-    async function createPendingCalcOrder() {
-        const { data: userData } = await supabase.auth.getUser();
-        const user = userData.user;
-        if (!user) {
-            window.location.href = "/login";
-            return null;
-        }
-
-        const amountCents = Number.parseInt(process.env.NEXT_PUBLIC_CALCS_PRICE_CENTS || "99000", 10) || 99000;
-
-        const { data, error } = await supabase
-            .from("orders")
-            .insert({
-                user_id: user.id,
-                status: "pending",
-                amount_cents: amountCents,
-                currency: "RUB",
-                customer_email: user.email ?? null,
-                provider: "getcourse",
-                provider_order_id: null,
-                paid_at: null,
-                kind: "calc_access",
-                meta: { purpose: "calc_access" },
-                consumed_at: null,
-                updated_at: new Date().toISOString(),
-            })
-            .select("id")
-            .single();
-
-        if (error) {
-            setErr(error.message);
-            return null;
-        }
-
-        return data.id as string;
+    function getProduct(kind: CalcKind) {
+        return products.find((p) => p.code === kind) || null;
     }
 
-    function getCalcPayUrl(localOrderId: string) {
-        const base = process.env.NEXT_PUBLIC_GC_CALCS_URL;
-        if (!base) return "";
-
-        const u = new URL(base);
-        u.searchParams.set("local_order_id", localOrderId);
-        u.searchParams.set("kind", "calc_access");
-        return u.toString();
-    }
-
-    function buildCacheKey(kind: CalcKind) {
-        return JSON.stringify({
-            kind,
-            year: dateParts?.year,
-            month: dateParts?.month,
-            day: dateParts?.day,
-            hour: timeParts?.hour,
-            minute: timeParts?.minute,
-            city: profile?.birth_city?.trim().toLowerCase(),
-            targetDate: kind === "day" ? targetDate : null,
-        });
-    }
-
-    function readCachedResult(kind: CalcKind): ApiResult | null {
-        if (!paidOrder?.meta || kind === "natal") return null;
-        const cacheKey = buildCacheKey(kind);
-        const calcsCache = (paidOrder.meta.calcs_cache as Record<string, unknown> | undefined) || {};
-        const row = calcsCache[cacheKey] as { text?: string; raw?: unknown } | undefined;
-        if (!row?.text) return null;
-        return { kind, text: row.text, raw: row.raw } as ApiResult;
-    }
-
-    async function saveCachedResult(kind: Exclude<CalcKind, "natal">, payload: { text: string; raw: unknown }) {
-        if (!paidOrder?.id) return;
-
-        const cacheKey = buildCacheKey(kind);
-        const existingMeta = (paidOrder.meta ?? {}) as Record<string, unknown>;
-        const existingCache = (existingMeta.calcs_cache as Record<string, unknown> | undefined) ?? {};
-
-        const nextMeta: Record<string, unknown> = {
-            ...existingMeta,
-            calcs_cache: {
-                ...existingCache,
-                [cacheKey]: {
-                    ...payload,
-                    saved_at: new Date().toISOString(),
-                },
-            },
-        };
-
-        const { error } = await supabase
-            .from("orders")
-            .update({ meta: nextMeta, updated_at: new Date().toISOString() })
-            .eq("id", paidOrder.id);
-
-        if (!error) {
-            setPaidOrder({ ...paidOrder, meta: nextMeta });
-        }
+    function isPurchased(kind: CalcKind) {
+        return !!accessMap[kind];
     }
 
     async function callJson(url: string) {
@@ -256,10 +269,13 @@ export default function CalculationsPage() {
         try {
             res = await fetch(url, { method: "GET" });
         } catch {
-            throw new Error("Сервис расчётов временно недоступен. Проверьте подключение к API и попробуйте ещё раз.");
+            throw new Error(
+                "Сервис расчётов временно недоступен. Проверьте подключение к API и попробуйте ещё раз."
+            );
         }
 
         const json = await res.json().catch(() => null);
+
         if (!res.ok) {
             const msg = json?.detail || json?.message || `HTTP ${res.status}`;
             throw new Error(msg);
@@ -268,132 +284,424 @@ export default function CalculationsPage() {
         return json;
     }
 
-    async function run(kind: CalcKind) {
-        if (!canRunBirth || profileLoading || checkingAccess) return;
+    async function saveCalculation(params: {
+        kind: CalcKind;
+        resultText: string;
+        resultJson: any;
+        inputParams: any;
+        targetDate?: string | null;
+    }) {
+        if (!userId) return;
 
-        if (kind !== "natal" && !hasPaidAccess) {
-            setErr("Прогнозы на день/неделю/месяц доступны после покупки. Сначала оплатите доступ.");
+        const payload = {
+            user_id: userId,
+            kind: params.kind,
+            target_date: params.targetDate ?? null,
+            result_text: params.resultText,
+            result_json: params.resultJson ?? null,
+            input_params: params.inputParams ?? null,
+        };
+
+        if (params.kind === "natal" || params.kind === "week" || params.kind === "month") {
+            const { error } = await supabase
+                .from("saved_calculations")
+                .upsert(payload, { onConflict: "user_id,kind" });
+
+            if (error) {
+                console.error("saveCalculation error:", error);
+            }
+
             return;
         }
 
-        if (kind !== "natal") {
-            const cached = readCachedResult(kind);
-            if (cached) {
-                setErr(null);
-                setResult(cached);
-                return;
+        if (params.kind === "day") {
+            const { error } = await supabase
+                .from("saved_calculations")
+                .upsert(payload, { onConflict: "user_id,kind,target_date" });
+
+            if (error) {
+                console.error("saveCalculation error:", error);
             }
         }
+    }
+
+    function showSaved(kind: CalcKind) {
+        const row = savedMap[kind];
+        if (!row) return false;
+
+        setResult({
+            kind,
+            text: row.result_text,
+            raw: row.result_json,
+        } as ApiResult);
+
+        setResultMeta({
+            source: "saved",
+            updatedAt: row.updated_at,
+        });
+
+        return true;
+    }
+
+    function requireProfile(): boolean {
+        if (profileLoading) return false;
+
+        if (!canRun) {
+            setErr(
+                `Чтобы открыть расчёты, сначала заполните в профиле: ${missingFields.join(", ")}.`
+            );
+            return false;
+        }
+
+        return true;
+    }
+
+    async function runNatal() {
+        if (!requireProfile()) return;
 
         setLoading(true);
-        setLoadingKind(kind);
+        setActiveKind("natal");
         setErr(null);
         setResult(null);
+        setResultMeta({ source: null, updatedAt: null });
 
         try {
+            if (showSaved("natal")) return;
+
             const qs = new URLSearchParams({
                 year: String(dateParts!.year),
                 month: String(dateParts!.month),
                 day: String(dateParts!.day),
+                city_name: profile!.birth_city!.trim(),
                 hour: timeParts!.hour,
                 minute: timeParts!.minute,
+            });
+
+            const json = await callJson(`${API}/natal?${qs.toString()}`);
+            const text = json?.natal_chart || "Пустой ответ";
+
+            const nextResult: ApiResult = {
+                kind: "natal",
+                text,
+                meta: json,
+            };
+
+            setResult(nextResult);
+            setResultMeta({ source: "fresh", updatedAt: null });
+
+            await saveCalculation({
+                kind: "natal",
+                resultText: text,
+                resultJson: json,
+                inputParams: {
+                    birth_date: profile?.birth_date,
+                    birth_time: profile?.birth_time,
+                    birth_city: profile?.birth_city,
+                },
+            });
+
+            setSavedMap((prev) => ({
+                ...prev,
+                natal: {
+                    id: "temp-natal",
+                    kind: "natal",
+                    target_date: null,
+                    result_text: text,
+                    result_json: json,
+                    input_params: null,
+                    updated_at: new Date().toISOString(),
+                },
+            }));
+        } catch (e: any) {
+            setErr(e?.message || "Ошибка");
+        } finally {
+            setLoading(false);
+            setActiveKind(null);
+        }
+    }
+
+    async function runDay() {
+        if (!requireProfile()) return;
+
+        if (!isPurchased("day")) {
+            setErr("Прогноз на день доступен только после оплаты.");
+            return;
+        }
+
+        setLoading(true);
+        setActiveKind("day");
+        setErr(null);
+        setResult(null);
+        setResultMeta({ source: null, updatedAt: null });
+
+        try {
+            if (showSaved("day")) return;
+
+            const qs = new URLSearchParams({
+                year: String(dateParts!.year),
+                month: String(dateParts!.month),
+                day: String(dateParts!.day),
+                hour: String(parseInt(timeParts!.hour || "12", 10) || 12),
+                minute: String(parseInt(timeParts!.minute || "0", 10) || 0),
+                city_name: profile!.birth_city!.trim(),
+                target_date: targetDate,
+            });
+
+            const json = await callJson(`${API}/transits_day?${qs.toString()}`);
+            const item = Array.isArray(json) ? json[0] : json;
+
+            const lines: string[] = [];
+            if (item?.day_summary) lines.push(item.day_summary);
+            if (Array.isArray(item?.aspects_text)) lines.push("", ...item.aspects_text);
+
+            const text = lines.join("\n") || "Пустой ответ";
+
+            const nextResult: ApiResult = {
+                kind: "day",
+                text,
+                raw: json,
+            };
+
+            setResult(nextResult);
+            setResultMeta({ source: "fresh", updatedAt: null });
+
+            await saveCalculation({
+                kind: "day",
+                targetDate,
+                resultText: text,
+                resultJson: json,
+                inputParams: {
+                    birth_date: profile?.birth_date,
+                    birth_time: profile?.birth_time,
+                    birth_city: profile?.birth_city,
+                    target_date: targetDate,
+                },
+            });
+
+            setSavedMap((prev) => ({
+                ...prev,
+                day: {
+                    id: "temp-day",
+                    kind: "day",
+                    target_date: targetDate,
+                    result_text: text,
+                    result_json: json,
+                    input_params: null,
+                    updated_at: new Date().toISOString(),
+                },
+            }));
+        } catch (e: any) {
+            setErr(e?.message || "Ошибка");
+        } finally {
+            setLoading(false);
+            setActiveKind(null);
+        }
+    }
+
+    async function runWeek() {
+        if (!requireProfile()) return;
+
+        if (!isPurchased("week")) {
+            setErr("Прогноз на неделю доступен только после оплаты.");
+            return;
+        }
+
+        setLoading(true);
+        setActiveKind("week");
+        setErr(null);
+        setResult(null);
+        setResultMeta({ source: null, updatedAt: null });
+
+        try {
+            if (showSaved("week")) return;
+
+            const qs = new URLSearchParams({
+                year: String(dateParts!.year),
+                month: String(dateParts!.month),
+                day: String(dateParts!.day),
+                hour: String(parseInt(timeParts!.hour || "12", 10) || 12),
+                minute: String(parseInt(timeParts!.minute || "0", 10) || 0),
                 city_name: profile!.birth_city!.trim(),
             });
 
-            if (kind === "day") qs.set("target_date", targetDate);
+            const json = await callJson(`${API}/transits_week_theme?${qs.toString()}`);
 
-            const path =
-                kind === "natal"
-                    ? "/natal"
-                    : kind === "day"
-                        ? "/transits_day"
-                        : kind === "week"
-                            ? "/transits_week_theme"
-                            : "/transits_month";
+            const arr = json?.weekly_theme_forecast || [];
+            const text = Array.isArray(arr)
+                ? arr.map((x: any) => x.summary_text).join("\n\n")
+                : JSON.stringify(json, null, 2);
 
-            const json = await callJson(`${API}${path}?${qs.toString()}`);
+            const nextResult: ApiResult = {
+                kind: "week",
+                text: text || "Пустой ответ",
+                raw: json,
+            };
 
-            if (kind === "natal") {
-                setResult({ kind: "natal", text: json?.natal_chart || "Пустой ответ", meta: json });
-                return;
-            }
+            setResult(nextResult);
+            setResultMeta({ source: "fresh", updatedAt: null });
 
-            if (kind === "day") {
-                const item = Array.isArray(json) ? json[0] : json;
-                const lines: string[] = [];
-                if (item?.day_summary) lines.push(String(item.day_summary));
-                if (Array.isArray(item?.aspects_text)) lines.push("", ...item.aspects_text.map((x: unknown) => String(x)));
-                const text = lines.join("\n") || "Пустой ответ";
-                const out: ApiResult = { kind: "day", text, raw: json };
-                setResult(out);
-                await saveCachedResult("day", { text, raw: json });
-                return;
-            }
+            await saveCalculation({
+                kind: "week",
+                resultText: text || "Пустой ответ",
+                resultJson: json,
+                inputParams: {
+                    birth_date: profile?.birth_date,
+                    birth_time: profile?.birth_time,
+                    birth_city: profile?.birth_city,
+                },
+            });
 
-            if (kind === "week") {
-                const arr = json?.weekly_theme_forecast || [];
-                const text = Array.isArray(arr)
-                    ? arr.map((x: { summary_text?: string }) => x.summary_text || "").join("\n\n")
-                    : JSON.stringify(json, null, 2);
-                const out: ApiResult = { kind: "week", text: text || "Пустой ответ", raw: json };
-                setResult(out);
-                await saveCachedResult("week", { text: out.text, raw: json });
-                return;
-            }
-
-            const arr = json?.month_transits || [];
-            const text = Array.isArray(arr) && arr.length
-                ? arr
-                    .slice(0, 200)
-                    .map((x: { date?: string; description?: string }) => `${x.date} — ${x.description}`)
-                    .join("\n")
-                : "Нет точных благоприятных аспектов в ближайшие 30 дней.";
-
-            const out: ApiResult = { kind: "month", text, raw: json };
-            setResult(out);
-            await saveCachedResult("month", { text, raw: json });
-        } catch (e) {
-            setErr(e instanceof Error ? e.message : "Ошибка");
+            setSavedMap((prev) => ({
+                ...prev,
+                week: {
+                    id: "temp-week",
+                    kind: "week",
+                    target_date: null,
+                    result_text: text || "Пустой ответ",
+                    result_json: json,
+                    input_params: null,
+                    updated_at: new Date().toISOString(),
+                },
+            }));
+        } catch (e: any) {
+            setErr(e?.message || "Ошибка");
         } finally {
             setLoading(false);
-            setLoadingKind(null);
+            setActiveKind(null);
         }
     }
 
-    async function buyAccess() {
-        setPayLoading(true);
+    async function runMonth() {
+        if (!requireProfile()) return;
+
+        if (!isPurchased("month")) {
+            setErr("Прогноз на месяц доступен только после оплаты.");
+            return;
+        }
+
+        setLoading(true);
+        setActiveKind("month");
         setErr(null);
+        setResult(null);
+        setResultMeta({ source: null, updatedAt: null });
+
         try {
-            const localOrderId = await createPendingCalcOrder();
-            if (!localOrderId) return;
+            if (showSaved("month")) return;
 
-            const url = getCalcPayUrl(localOrderId);
-            if (!url) {
-                setErr("Заказ создан, но ссылка на оплату не задана. Добавьте NEXT_PUBLIC_GC_CALCS_URL.");
-                return;
-            }
+            const qs = new URLSearchParams({
+                year: String(dateParts!.year),
+                month: String(dateParts!.month),
+                day: String(dateParts!.day),
+                hour: String(parseInt(timeParts!.hour || "12", 10) || 12),
+                minute: String(parseInt(timeParts!.minute || "0", 10) || 0),
+                city_name: profile!.birth_city!.trim(),
+            });
 
-            window.location.href = url;
+            const json = await callJson(`${API}/transits_month?${qs.toString()}`);
+
+            const arr = json?.month_transits || [];
+            const text =
+                Array.isArray(arr) && arr.length
+                    ? arr
+                        .slice(0, 200)
+                        .map((x: any) => `${x.date} — ${x.description}`)
+                        .join("\n")
+                    : "Нет точных благоприятных аспектов в ближайшие 30 дней.";
+
+            const nextResult: ApiResult = {
+                kind: "month",
+                text,
+                raw: json,
+            };
+
+            setResult(nextResult);
+            setResultMeta({ source: "fresh", updatedAt: null });
+
+            await saveCalculation({
+                kind: "month",
+                resultText: text,
+                resultJson: json,
+                inputParams: {
+                    birth_date: profile?.birth_date,
+                    birth_time: profile?.birth_time,
+                    birth_city: profile?.birth_city,
+                },
+            });
+
+            setSavedMap((prev) => ({
+                ...prev,
+                month: {
+                    id: "temp-month",
+                    kind: "month",
+                    target_date: null,
+                    result_text: text,
+                    result_json: json,
+                    input_params: null,
+                    updated_at: new Date().toISOString(),
+                },
+            }));
+        } catch (e: any) {
+            setErr(e?.message || "Ошибка");
         } finally {
-            setPayLoading(false);
+            setLoading(false);
+            setActiveKind(null);
         }
     }
 
-    const disableRunButtons = !canRunBirth || loading || profileLoading || checkingAccess;
+    async function openPayment(kind: "day" | "week" | "month") {
+        const { data: userData, error } = await supabase.auth.getUser();
+
+        if (error || !userData.user) {
+            window.location.href = "/login";
+            return;
+        }
+
+        const res = await fetch("http://127.0.0.1:8011/payments/prodamus/link", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-User-Id": userData.user.id,
+            },
+            body: JSON.stringify({ product_code: kind }),
+        });
+
+        const json = await res.json();
+
+        if (!res.ok) {
+            throw new Error(json?.detail || "Не удалось создать ссылку оплаты");
+        }
+
+        window.open(json.payment_url, "_blank", "noopener,noreferrer");
+    }
+
+    function handleAction(kind: CalcKind) {
+        if (kind === "natal") {
+            void runNatal();
+            return;
+        }
+
+        if (!isPurchased(kind)) {
+            openPayment(kind);
+            return;
+        }
+
+        if (kind === "day") {
+            void runDay();
+            return;
+        }
+
+        if (kind === "week") {
+            void runWeek();
+            return;
+        }
+
+        if (kind === "month") {
+            void runMonth();
+        }
+    }
 
     return (
-        <div style={{ display: "grid", gap: 14 }}>
-            <style jsx>{`
-                @keyframes orbit {
-                    0% { transform: rotate(0deg) translateX(22px) rotate(0deg); }
-                    100% { transform: rotate(360deg) translateX(22px) rotate(-360deg); }
-                }
-                @keyframes pulse {
-                    0%, 100% { transform: scale(1); opacity: 0.85; }
-                    50% { transform: scale(1.16); opacity: 1; }
-                }
-            `}</style>
-
+        <div style={{ display: "grid", gap: 16 }}>
             <div
                 style={{
                     padding: 18,
@@ -403,8 +711,16 @@ export default function CalculationsPage() {
                 }}
             >
                 <div style={{ fontSize: 24, fontWeight: 950 }}>Расчёты</div>
-                <div style={{ marginTop: 6, color: "rgba(245,240,233,.75)" }}>
-                    Натальная карта — бесплатно. Прогнозы (день / неделя / месяц) — после покупки.
+
+                <div
+                    style={{
+                        marginTop: 8,
+                        color: "rgba(245,240,233,.72)",
+                        lineHeight: 1.55,
+                    }}
+                >
+                    Натальная карта доступна бесплатно. Прогнозы на день, неделю и месяц
+                    открываются после оплаты и сохраняются в кабинете.
                 </div>
 
                 {profileLoading && (
@@ -414,46 +730,119 @@ export default function CalculationsPage() {
                 )}
 
                 {!profileLoading && (profileError || missingFields.length > 0) && (
-                    <div style={{ marginTop: 14, padding: 14, borderRadius: 14, border: "1px solid rgba(255,190,90,.26)", background: "rgba(255,190,90,.08)", color: "rgba(245,240,233,.92)" }}>
+                    <div
+                        style={{
+                            marginTop: 14,
+                            padding: 14,
+                            borderRadius: 14,
+                            border: "1px solid rgba(255,190,90,.26)",
+                            background: "rgba(255,190,90,.08)",
+                            color: "rgba(245,240,233,.92)",
+                        }}
+                    >
                         {profileError
                             ? `Не удалось загрузить профиль: ${profileError}`
-                            : `Чтобы открыть расчёты, сначала заполните в профиле: ${missingFields.join(", ")}.`}
+                            : `Чтобы открыть расчёты, сначала заполните в профиле: ${missingFields.join(
+                                ", "
+                            )}.`}
                     </div>
                 )}
 
-                {!checkingAccess && !hasPaidAccess && (
-                    <div style={{ marginTop: 12, padding: 12, borderRadius: 14, border: "1px solid rgba(120,230,255,.26)", background: "rgba(120,230,255,.08)", color: "rgba(245,240,233,.92)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                        <div style={{ fontSize: 13 }}>Доступ к прогнозам (день/неделя/месяц) ещё не куплен.</div>
-                        <button onClick={() => void buyAccess()} disabled={payLoading} style={buyBtn()}>
-                            {payLoading ? "Создаём заказ…" : "Купить доступ к прогнозам"}
-                        </button>
-                    </div>
-                )}
+                <div
+                    style={{
+                        marginTop: 16,
+                        display: "grid",
+                        gap: 12,
+                        gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                    }}
+                >
+                    {products.map((product) => {
+                        const purchased = isPurchased(product.code);
+                        const hasSaved =
+                            product.code === "day"
+                                ? !!savedMap.day && savedMap.day.target_date === targetDate
+                                : !!savedMap[product.code];
 
-                {!checkingAccess && hasPaidAccess && (
-                    <div style={{ marginTop: 12, color: "rgba(120,230,255,.92)", fontSize: 13, fontWeight: 700 }}>
-                        ✓ Доступ к прогнозам активен. Готовые результаты сохраняются и повторно отдаются из покупки.
-                    </div>
-                )}
+                        return (
+                            <div
+                                key={product.code}
+                                style={{
+                                    padding: 16,
+                                    borderRadius: 18,
+                                    border: "1px solid rgba(224,197,143,.14)",
+                                    background: "rgba(10,18,38,.18)",
+                                    display: "grid",
+                                    gap: 10,
+                                }}
+                            >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                    <div style={{ fontWeight: 900, fontSize: 16 }}>{product.title}</div>
 
-                <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                    <button disabled={disableRunButtons} onClick={() => void run("natal")} style={btn()}>
-                        {loadingKind === "natal" ? "…" : modeTitle("natal")}
-                    </button>
-                    <button disabled={disableRunButtons || !hasPaidAccess} onClick={() => void run("day")} style={btn(!hasPaidAccess)}>
-                        {loadingKind === "day" ? "…" : modeTitle("day")}
-                    </button>
-                    <button disabled={disableRunButtons || !hasPaidAccess} onClick={() => void run("week")} style={btn(!hasPaidAccess)}>
-                        {loadingKind === "week" ? "…" : modeTitle("week")}
-                    </button>
-                    <button disabled={disableRunButtons || !hasPaidAccess} onClick={() => void run("month")} style={btn(!hasPaidAccess)}>
-                        {loadingKind === "month" ? "…" : modeTitle("month")}
-                    </button>
+                                    <div
+                                        style={{
+                                            padding: "6px 10px",
+                                            borderRadius: 999,
+                                            fontSize: 12,
+                                            fontWeight: 800,
+                                            border: "1px solid rgba(224,197,143,.18)",
+                                            background: product.is_free
+                                                ? "rgba(90,220,150,.12)"
+                                                : purchased
+                                                    ? "rgba(110,170,255,.14)"
+                                                    : "rgba(224,197,143,.10)",
+                                            color: "rgba(245,240,233,.92)",
+                                            whiteSpace: "nowrap",
+                                        }}
+                                    >
+                                        {product.is_free
+                                            ? "Бесплатно"
+                                            : purchased
+                                                ? "Куплено"
+                                                : `${product.price_rub} ₽`}
+                                    </div>
+                                </div>
+
+                                <div style={{ color: "rgba(245,240,233,.72)", lineHeight: 1.5, minHeight: 44 }}>
+                                    {product.description || "Описание скоро будет добавлено"}
+                                </div>
+
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                    {hasSaved && (
+                                        <div style={tagStyle("rgba(90,220,150,.12)")}>Сохранено</div>
+                                    )}
+                                    {!product.is_free && purchased && (
+                                        <div style={tagStyle("rgba(110,170,255,.14)")}>Доступ открыт</div>
+                                    )}
+                                </div>
+
+                                <button
+                                    disabled={!canRun || profileLoading || loading}
+                                    onClick={() => handleAction(product.code)}
+                                    style={btn()}
+                                >
+                                    {loading && activeKind === product.code
+                                        ? "Выполняется…"
+                                        : product.is_free || purchased
+                                            ? hasSaved
+                                                ? "Открыть результат"
+                                                : "Выполнить расчёт"
+                                            : `Купить за ${product.price_rub} ₽`}
+                                </button>
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
 
             {err && (
-                <div style={{ padding: 16, borderRadius: 18, border: "1px solid rgba(255,110,90,.22)", background: "rgba(255,110,90,.06)" }}>
+                <div
+                    style={{
+                        padding: 16,
+                        borderRadius: 18,
+                        border: "1px solid rgba(255,110,90,.22)",
+                        background: "rgba(255,110,90,.06)",
+                    }}
+                >
                     <div style={{ fontWeight: 900 }}>Ошибка</div>
                     <div style={{ marginTop: 6, color: "rgba(245,240,233,.80)" }}>{err}</div>
                 </div>
@@ -465,60 +854,60 @@ export default function CalculationsPage() {
                     borderRadius: 22,
                     border: "1px solid rgba(224,197,143,.14)",
                     background: "rgba(17,34,80,.16)",
-                    minHeight: "40vh",
+                    minHeight: "42vh",
                 }}
             >
-                <div style={{ fontSize: 16, fontWeight: 950, marginBottom: 10 }}>Результат</div>
+                <div
+                    style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        marginBottom: 12,
+                    }}
+                >
+                    <div style={{ fontSize: 16, fontWeight: 950 }}>Результат</div>
 
-                {loading && (
-                    <div style={{
-                        display: "grid",
-                        placeItems: "center",
-                        minHeight: 180,
-                        borderRadius: 16,
-                        border: "1px solid rgba(224,197,143,.10)",
-                        background: "rgba(10,18,38,.18)",
-                    }}>
-                        <div style={{ position: "relative", width: 70, height: 70 }}>
-                            <div style={{
-                                width: 26,
-                                height: 26,
-                                borderRadius: "50%",
-                                position: "absolute",
-                                top: "50%",
-                                left: "50%",
-                                transform: "translate(-50%, -50%)",
-                                background: "radial-gradient(circle, rgba(255,216,142,1) 0%, rgba(255,173,92,1) 100%)",
-                                boxShadow: "0 0 26px rgba(255,190,90,.45)",
-                                animation: "pulse 1.2s ease-in-out infinite",
-                            }} />
-                            <div style={{
-                                width: 10,
-                                height: 10,
-                                borderRadius: "50%",
-                                position: "absolute",
-                                top: "50%",
-                                left: "50%",
-                                marginLeft: -5,
-                                marginTop: -5,
-                                background: "rgba(120,230,255,1)",
-                                boxShadow: "0 0 10px rgba(120,230,255,.9)",
-                                animation: "orbit 1.4s linear infinite",
-                            }} />
+                    {resultMeta.source && (
+                        <div style={{ color: "rgba(245,240,233,.68)", fontSize: 13 }}>
+                            {resultMeta.source === "saved"
+                                ? "Показан сохранённый результат"
+                                : "Показан новый расчёт"}
+                            {resultMeta.updatedAt
+                                ? ` · ${new Date(resultMeta.updatedAt).toLocaleString("ru-RU")}`
+                                : ""}
                         </div>
-                        <div style={{ marginTop: 12, color: "rgba(245,240,233,.82)", fontWeight: 700 }}>
-                            Считаем: {loadingKind ? modeTitle(loadingKind) : "расчёт"}…
-                        </div>
-                    </div>
-                )}
+                    )}
+                </div>
 
-                {!loading && !result && (
+                {!result && !loading && (
                     <div style={{ color: "rgba(245,240,233,.70)" }}>
-                        Нажми кнопку расчёта — результат появится здесь.
+                        Выбери расчёт — результат появится здесь.
                     </div>
                 )}
 
-                {!loading && result && (
+                {loading && activeKind && (
+                    <div
+                        style={{
+                            padding: 16,
+                            borderRadius: 18,
+                            border: "1px solid rgba(224,197,143,.12)",
+                            background: "rgba(10,18,38,.18)",
+                        }}
+                    >
+                        <div style={{ fontWeight: 900, fontSize: 16 }}>
+                            {loadingLabels[activeKind][loadingStep]}
+                            <AnimatedDots />
+                        </div>
+                        <div style={{ marginTop: 8, color: "rgba(245,240,233,.72)" }}>
+                            Пожалуйста, подождите. После завершения результат автоматически
+                            сохранится в кабинете.
+                        </div>
+                    </div>
+                )}
+
+                {result && !loading && (
                     <pre
                         style={{
                             margin: 0,
@@ -530,37 +919,54 @@ export default function CalculationsPage() {
                             background: "rgba(10,18,38,.18)",
                             color: "rgba(245,240,233,.92)",
                             fontSize: 13,
-                            lineHeight: 1.55,
+                            lineHeight: 1.6,
                         }}
                     >
-                        {result.text}
-                    </pre>
+            {result.text}
+          </pre>
                 )}
             </div>
         </div>
     );
 }
 
-function btn(disabledStyle = false): React.CSSProperties {
+function AnimatedDots() {
+    const [dots, setDots] = useState(".");
+
+    useEffect(() => {
+        const timer = window.setInterval(() => {
+            setDots((prev) => {
+                if (prev === "...") return ".";
+                return prev + ".";
+            });
+        }, 450);
+
+        return () => window.clearInterval(timer);
+    }, []);
+
+    return <span>{dots}</span>;
+}
+
+function tagStyle(bg: string): React.CSSProperties {
     return {
-        borderRadius: 14,
-        padding: "10px 12px",
-        border: disabledStyle ? "1px solid rgba(224,197,143,.10)" : "1px solid rgba(224,197,143,.18)",
-        background: disabledStyle ? "rgba(17,34,80,.18)" : "rgba(224,197,143,.10)",
+        padding: "6px 10px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 800,
+        border: "1px solid rgba(224,197,143,.18)",
+        background: bg,
         color: "rgba(245,240,233,.92)",
-        fontWeight: 950,
-        cursor: "pointer",
     };
 }
 
-function buyBtn(): React.CSSProperties {
+function btn(): React.CSSProperties {
     return {
-        borderRadius: 12,
-        padding: "8px 10px",
-        border: "1px solid rgba(120,230,255,.26)",
-        background: "rgba(120,230,255,.16)",
-        color: "rgba(245,240,233,.95)",
-        fontWeight: 900,
+        borderRadius: 14,
+        padding: "11px 13px",
+        border: "1px solid rgba(224,197,143,.18)",
+        background: "rgba(224,197,143,.10)",
+        color: "rgba(245,240,233,.92)",
+        fontWeight: 950,
         cursor: "pointer",
     };
 }

@@ -225,15 +225,12 @@ export default function LoginPage() {
         setMsg(null);
         setLoading(true);
 
-        const redirectTo = getResetRedirectUrl();
+        const redirectTo = "https://momochitdafog.beget.app/reset-password";
+        console.log("[auth:reset] redirectTo =", redirectTo);
 
-        const options = redirectTo
-            ? {
-                redirectTo,
-            }
-            : undefined;
-
-        const { error } = await supabase.auth.resetPasswordForEmail(email, options);
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: "https://astroschool.site/reset-password",
+        });
 
         setLoading(false);
 
