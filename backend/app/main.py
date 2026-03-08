@@ -1,46 +1,28 @@
-from fastapi import FastAPI, HTTPException
+from collections import defaultdict
 from datetime import datetime, timedelta
-import swisseph as swe
+import logging
+import re
+from random import choice
+from typing import Dict, List, Optional
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from geopy.geocoders import Nominatim
 import pytz
+import requests
+import swisseph as swe
 from pytz import AmbiguousTimeError, NonExistentTimeError
 from timezonefinder import TimezoneFinder
-from geopy.geocoders import Nominatim
-from collections import defaultdict
-from typing import List, Dict
-import os
-import json
-import requests
-from dotenv import load_dotenv
-from pydantic import BaseModel
-from typing import Any
-import hmac
-import hashlib
+
 from .geo_suggest import router as geo_router
-from fastapi import FastAPI, HTTPException, Request, Query, Header
-from fastapi import APIRouter, Request, HTTPException, Query
-from fastapi.responses import JSONResponse
-from typing import List, Dict  # ← не забудь про импорт!
-from fastapi import Request, HTTPException
-import re
-import logging
-from random import choice
-from typing import Optional, Dict
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from .payments import router as payments_router
 
 load_dotenv()
 
 logger = logging.getLogger("uvicorn")
 app = FastAPI()
 
-PRODAMUS_PAYFORM_URL = os.getenv("PRODAMUS_PAYFORM_URL", "").strip()
-PRODAMUS_SECRET_KEY = os.getenv("PRODAMUS_SECRET_KEY", "").strip()
-
-SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
-
-FRONTEND_SUCCESS_URL = os.getenv("FRONTEND_SUCCESS_URL", "").strip()
-FRONTEND_FAIL_URL = os.getenv("FRONTEND_FAIL_URL", "").strip()
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -55,185 +37,10 @@ app.add_middleware(
 )
 DEFAULT_DATE_FORMAT = "%Y-%m-%d"
 app.include_router(geo_router)
+app.include_router(payments_router)
 # Путь к эфемеридам
 EPHE_PATH = "./ephe"
 swe.set_ephe_path(EPHE_PATH)
-
-class ProdamusLinkIn(BaseModel):
-    product_code: str
-
-
-def supabase_headers() -> dict:
-    return {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-    }
-
-
-def _deep_sort_and_stringify(value: Any) -> Any:
-    """
-    Приводит все значения к строкам и сортирует ключи рекурсивно.
-    Нужно для подписи Prodamus.
-    """
-    if isinstance(value, dict):
-        return {
-            str(k): _deep_sort_and_stringify(value[k])
-            for k in sorted(value.keys(), key=lambda x: str(x))
-        }
-    if isinstance(value, list):
-        return [_deep_sort_and_stringify(v) for v in value]
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "1" if value else "0"
-    return str(value)
-
-
-def create_prodamus_signature(data: dict, secret_key: str) -> str:
-    """
-    Алгоритм по документации Prodamus:
-    1) привести все значения к строкам
-    2) отсортировать всё по ключам, в том числе вглубь
-    3) перевести в JSON
-    4) экранировать /
-    5) подписать sha256 с secret_key
-
-    ВНИМАНИЕ:
-    если у тебя тестовая ссылка не пройдет проверку подписи,
-    сравни эту функцию с их Hmac.php 1 в 1.
-    """
-    prepared = _deep_sort_and_stringify(data)
-    payload = json.dumps(
-        prepared,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).replace("/", "\\/")
-
-    return hmac.new(
-        secret_key.encode("utf-8"),
-        payload.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-
-def get_product_by_code(product_code: str) -> dict:
-    url = f"{SUPABASE_URL}/rest/v1/calculation_products"
-    resp = requests.get(
-        url,
-        headers=supabase_headers(),
-        params={
-            "select": "code,title,description,price_rub,is_free,is_active,prodamus_name,prodamus_type,prodamus_sku",
-            "code": f"eq.{product_code}",
-            "limit": "1",
-        },
-        timeout=20,
-    )
-
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=500, detail=f"Ошибка чтения товара из Supabase: {resp.text}")
-
-    rows = resp.json()
-    if not rows:
-        raise HTTPException(status_code=404, detail="Товар не найден")
-
-    return rows[0]
-
-
-def create_order(user_id: str, product: dict) -> dict:
-    provider_order_id = f"calc-{product['code']}-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
-
-    payload = {
-        "user_id": user_id,
-        "product_code": product["code"],
-        "amount_rub": product["price_rub"],
-        "status": "pending",
-        "provider": "prodamus",
-        "provider_order_id": provider_order_id,
-    }
-
-    url = f"{SUPABASE_URL}/rest/v1/calculation_orders"
-    resp = requests.post(
-        url,
-        headers={**supabase_headers(), "Prefer": "return=representation"},
-        data=json.dumps(payload, ensure_ascii=False),
-        timeout=20,
-    )
-
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=500, detail=f"Ошибка создания заказа: {resp.text}")
-
-    rows = resp.json()
-    if not rows:
-        raise HTTPException(status_code=500, detail="Не удалось создать заказ")
-
-    return rows[0]
-
-
-def update_order_paid(provider_order_id: str, payload: dict) -> None:
-    patch_url = f"{SUPABASE_URL}/rest/v1/calculation_orders"
-    resp = requests.patch(
-        patch_url,
-        headers={**supabase_headers(), "Prefer": "return=representation"},
-        params={"provider_order_id": f"eq.{provider_order_id}"},
-        data=json.dumps({
-            "status": "paid",
-            "paid_at": datetime.utcnow().isoformat(),
-            "raw_payload": payload,
-        }, ensure_ascii=False),
-        timeout=20,
-    )
-
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=500, detail=f"Ошибка обновления заказа: {resp.text}")
-
-
-def get_order_by_provider_order_id(provider_order_id: str) -> dict:
-    url = f"{SUPABASE_URL}/rest/v1/calculation_orders"
-    resp = requests.get(
-        url,
-        headers=supabase_headers(),
-        params={
-            "select": "id,user_id,product_code,status,provider_order_id",
-            "provider_order_id": f"eq.{provider_order_id}",
-            "limit": "1",
-        },
-        timeout=20,
-    )
-
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=500, detail=f"Ошибка чтения заказа: {resp.text}")
-
-    rows = resp.json()
-    if not rows:
-        raise HTTPException(status_code=404, detail="Заказ не найден")
-
-    return rows[0]
-
-
-def grant_user_access(user_id: str, product_code: str, external_order_id: str) -> None:
-    url = f"{SUPABASE_URL}/rest/v1/user_calculation_access"
-
-    payload = {
-        "user_id": user_id,
-        "product_code": product_code,
-        "source": "payment",
-        "external_order_id": external_order_id,
-    }
-
-    resp = requests.post(
-        url,
-        headers={
-            **supabase_headers(),
-            "Prefer": "resolution=merge-duplicates,return=representation",
-        },
-        data=json.dumps(payload, ensure_ascii=False),
-        timeout=20,
-    )
-
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=500, detail=f"Ошибка выдачи доступа: {resp.text}")
 
 # Классификации планет для орбусов
 personal_planets = {"☉ Солнце", "🌙 Луна", "🖋 Меркурий", "💕 Венера", "⚔️ Марс"}
@@ -357,10 +164,6 @@ def get_julian_day_utc(
 
     return jd, utc_dt.strftime("%Y-%m-%d %H:%M:%S UTC"), tz_name
 
-
-
-
-
 def normalize_city_name(city_raw: str) -> str:
     city = city_raw.strip()
 
@@ -398,7 +201,6 @@ def get_lunar_events_near_date(date: datetime) -> List[Dict]:
             events.append({"type": "🌕 Полнолуние", "date": date + timedelta(days=offset)})
         # Можно добавить затмения отдельно — они сложнее
     return events
-
 
 def get_coordinates_smart(city_name: str) -> tuple:
     """
@@ -464,7 +266,6 @@ def get_coordinates_smart(city_name: str) -> tuple:
 
     raise HTTPException(400, f"❌ Не удалось определить координаты по запросу: '{city_name}'")
 
-
 # Расчёт аспектов
 def calculate_aspects(
         natal_positions: Dict[str, float],
@@ -523,9 +324,6 @@ def get_local_time_str(year, month, day, hour, minute, lat, lon):
     loc = _safe_localize(tz, datetime(year, month, day, hour, minute))
     return loc.strftime("%Y-%m-%d %H:%M:%S %Z%z"), tz_name
 
-
-
-
 # ── Система домов (Equal) ────────────────────────────────────────────────────
 def get_houses(jd: float, lat: float, lon: float) -> List[float]:
     """
@@ -572,7 +370,6 @@ def get_house(long: float, cusps: List[float]) -> int:
             return i + 1
     return 12
 
-
 # ── Домоуправители и тематика ───────────────────────────────────────────────
 sign_rulers = {i: p for i, p in enumerate([
     "⚔️ Марс","💕 Венера","🖋 Меркурий","🌙 Луна",
@@ -601,7 +398,6 @@ def format_degree_sotis(decimal_deg: float) -> str:
 
     return f"{zodiac_signs[sign_index]} {deg:02d}°{min_:02d}′{sec:02d}″"
 
-
 def get_house_rulers(jd, lat, lon):
     cusps = get_houses(jd, lat, lon)
     return {i+1: sign_rulers[int(cusps[i]//30)%12] for i in range(12)}
@@ -619,7 +415,6 @@ def group_aspects_by_topics(asps, rulers):
             if topic:
                 res.setdefault(topic, []).append(a)
     return res
-
 
 @app.get("/natal", response_model=Dict)
 async def get_natal_chart(
@@ -713,7 +508,6 @@ async def get_natal_chart(
             except swe.Error:
                 continue
 
-
         result_lines.append("👤 Личные планеты:")
 
         result_lines.extend(f"• {line}" for line in personal)
@@ -756,7 +550,6 @@ async def get_natal_chart(
 
     except Exception as e:
         raise HTTPException(400, detail=str(e))
-
 
 @app.get("/transits_day", response_model=List[Dict])
 async def get_transits_day_theme(
@@ -954,10 +747,6 @@ async def get_transits_day_theme(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
-
-
-
 @app.get("/transits_week_theme", response_model=Dict)
 async def get_transits_week_theme(
         year: int, month: int, day: int, hour: int, minute: int, city_name: str
@@ -1041,7 +830,6 @@ async def get_transits_week_theme(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
 @app.get("/transits_week", response_model=Dict)
 async def get_transits_week(
         year: int, month: int, day: int, hour: int, minute: int, city_name: str,
@@ -1049,7 +837,6 @@ async def get_transits_week(
 ):
     """Прогноз транзитов на неделю (7 дней подряд)."""
     return await calculate_transits_by_dates(year, month, day, hour, minute, city_name, mode="week", target_date=target_date)
-
 
 @app.get("/transits_month", response_model=Dict)
 async def get_transits_month(
@@ -1310,7 +1097,6 @@ async def get_ephemerides(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
 def parse_month(month_raw):
     MONTHS = {
         "январь": 1, "февраль": 2, "март": 3, "апрель": 4,
@@ -1322,7 +1108,6 @@ def parse_month(month_raw):
     if isinstance(month_raw, str):
         return MONTHS.get(month_raw.strip().lower())
     return None
-
 
 @app.post("/salebot/lunar_events")
 async def handle_salebot_lunar_events(request: Request):
@@ -1364,51 +1149,6 @@ async def handle_salebot_lunar_events(request: Request):
     except Exception as e:
         logger.error("Ошибка в /salebot/lunar_events: %s", str(e))
         raise HTTPException(status_code=400, detail=str(e))
-
-async def handle_salebot_lunar_events(request: Request):
-    try:
-        raw_body = await request.body()
-        try:
-            data = json.loads(raw_body)
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Некорректный JSON в теле запроса")
-
-        body = data if isinstance(data, dict) else {}
-        logger.info("Тело запроса от Salebot (лунные события): %s", body)
-
-        year = int(body.get("год"))
-        month_raw = body.get("месяц")
-        month = parse_month(month_raw)
-        if not month:
-            raise HTTPException(status_code=400, detail=f"Некорректный месяц: {month_raw}")
-        day = int(body.get("день"))
-        city = body.get("место_рождения", "Москва")
-
-        hour, minute = 12, 0  # фиксация по МСК
-        lat, lon = get_coordinates_smart(city)
-
-        # Список ключевых лунных событий
-        lunar_events = get_lunar_events(year, month, day, lat, lon)
-
-        reply = {
-            "user_id": body.get("platform_id"),
-            "message": body.get("возврат", "Лунные события и их толкование"),
-            "group_id": body.get("group"),
-            "array": [event["description"] for event in lunar_events],
-            "array_rod": ["🌕 Лунные события"] + [event["summary"] for event in lunar_events]
-        }
-
-        api_key = body.get("api_key")
-        salebot_url = f"https://chatter.salebot.pro/api/{api_key}/tg_callback"
-        headers = {"Content-Type": "application/json"}
-        requests.post(salebot_url, json=reply, headers=headers)
-
-        return {"status": "ok"}
-
-    except Exception as e:
-        logger.error("Ошибка в /salebot/lunar_events: %s", str(e))
-        raise HTTPException(status_code=400, detail=str(e))
-
 
 @app.get("/saturn_summer", response_model=Dict)
 async def get_jupiter_aspects(year: int, month: int, day: int, hour: int, minute: int, city_name: str):
@@ -1544,7 +1284,6 @@ def group_aspects_by_topics(aspects_list: list, house_rulers: Dict[int, str]) ->
                     result[topic].append(aspect)
     return result
 
-
 @app.get("/eclipse_aspects")
 def eclipse_aspects(
         year: int = Query(...), month: int = Query(...), day: int = Query(...),
@@ -1595,7 +1334,6 @@ def eclipse_aspects(
                         "eclipse_degree": f"{eclipse['pos_deg']:.2f}° {eclipse['sign']}",
                         "diff": round(delta, 2)
                     })
-
 
     # Тема жизни по планете (кратко)
     themes = {
@@ -1717,7 +1455,6 @@ def group_events_into_periods(events: List[Dict]) -> List[Dict]:
     # удобная сортировка: по стартовой дате
     periods.sort(key=lambda p: p["start_date"])
     return periods
-
 
 DOMAIN_CONFIG = {
     "love": {
@@ -1913,7 +1650,6 @@ async def year_love(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
 @app.get("/year_career", response_model=Dict)
 async def year_career(
         year: int, month: int, day: int,
@@ -1935,7 +1671,6 @@ async def year_career(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
 @app.get("/year_finance", response_model=Dict)
 async def year_finance(
         year: int, month: int, day: int,
@@ -1956,115 +1691,3 @@ async def year_finance(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-@app.post("/payments/prodamus/link")
-async def create_prodamus_payment_link(
-        body: ProdamusLinkIn,
-        request: Request,
-        x_user_id: Optional[str] = Header(default=None),
-):
-    """
-    Создает ссылку на оплату для конкретного расчета.
-    Пока user_id берем из заголовка X-User-Id.
-    """
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="Нет X-User-Id")
-
-    if not PRODAMUS_PAYFORM_URL:
-        raise HTTPException(status_code=500, detail="Не задан PRODAMUS_PAYFORM_URL")
-
-    if not PRODAMUS_SECRET_KEY:
-        raise HTTPException(status_code=500, detail="Не задан PRODAMUS_SECRET_KEY")
-
-    product = get_product_by_code(body.product_code)
-
-    if not product.get("is_active"):
-        raise HTTPException(status_code=400, detail="Товар неактивен")
-
-    if product.get("is_free"):
-        raise HTTPException(status_code=400, detail="Этот расчёт бесплатный, оплата не требуется")
-
-    order = create_order(x_user_id, product)
-
-    data = {
-        "do": "link",
-        "products": [
-            {
-                "name": product.get("prodamus_name") or product["title"],
-                "price": product["price_rub"],
-                "quantity": 1,
-                "sku": product.get("prodamus_sku") or product["code"],
-                "type": product.get("prodamus_type") or "service",
-            }
-        ],
-        "order_id": order["provider_order_id"],
-    }
-
-    if FRONTEND_SUCCESS_URL:
-        data["urlSuccess"] = FRONTEND_SUCCESS_URL
-    if FRONTEND_FAIL_URL:
-        data["urlReturn"] = FRONTEND_FAIL_URL
-
-    data["signature"] = create_prodamus_signature(data, PRODAMUS_SECRET_KEY)
-
-    try:
-        resp = requests.post(
-            PRODAMUS_PAYFORM_URL,
-            data=data,
-            timeout=20,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Ошибка запроса в Prodamus: {e}")
-
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"Ошибка Prodamus: {resp.text}")
-
-    payment_url = resp.text.strip()
-
-    return {
-        "ok": True,
-        "payment_url": payment_url,
-        "provider_order_id": order["provider_order_id"],
-    }
-
-@app.post("/payments/prodamus/webhook")
-async def prodamus_webhook(request: Request):
-    """
-    Принимает webhook об успешной оплате.
-    URL этого webhook нужно указать в кабинете Prodamus.
-    """
-    content_type = request.headers.get("content-type", "").lower()
-
-    if "application/json" in content_type:
-        payload = await request.json()
-    else:
-        form = await request.form()
-        payload = dict(form)
-
-    incoming_signature = str(payload.get("signature", "")).strip()
-    if not incoming_signature:
-        raise HTTPException(status_code=400, detail="Нет signature")
-
-    data_to_verify = dict(payload)
-    data_to_verify.pop("signature", None)
-
-    expected_signature = create_prodamus_signature(data_to_verify, PRODAMUS_SECRET_KEY)
-
-    if not hmac.compare_digest(incoming_signature, expected_signature):
-        raise HTTPException(status_code=400, detail="Неверная signature")
-
-    provider_order_id = str(payload.get("order_id", "")).strip()
-    if not provider_order_id:
-        raise HTTPException(status_code=400, detail="Нет order_id")
-
-    order = get_order_by_provider_order_id(provider_order_id)
-
-    if order["status"] != "paid":
-        update_order_paid(provider_order_id, payload)
-        grant_user_access(
-            user_id=order["user_id"],
-            product_code=order["product_code"],
-            external_order_id=provider_order_id,
-        )
-
-    return {"ok": True}
