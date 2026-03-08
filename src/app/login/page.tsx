@@ -5,6 +5,22 @@ import { supabase } from "@/lib/supabase/client";
 
 type Mode = "signin" | "signup" | "reset";
 
+const PUBLIC_APP_URL = process.env.NEXT_PUBLIC_APP_URL?.trim();
+
+function getResetRedirectUrl() {
+    if (PUBLIC_APP_URL) {
+        return `${PUBLIC_APP_URL.replace(/\/$/, "")}/reset-password`;
+    }
+
+    const origin = window.location.origin;
+
+    if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
+        return "";
+    }
+
+    return `${origin}/reset-password`;
+}
+
 function supabaseErrorRu(message: string, context: "signin" | "signup" | "reset" = "signin") {
     const m = (message || "").toLowerCase().trim();
 
@@ -30,6 +46,9 @@ function supabaseErrorRu(message: string, context: "signin" | "signup" | "reset"
     }
 
     if (context === "reset") {
+        if (m.includes("unable to process request")) {
+            return "Не удалось обработать запрос на сброс. Обычно это из-за некорректного Redirect URL или настроек SMTP в Supabase.";
+        }
         if (m.includes("redirect") && (m.includes("invalid") || m.includes("not allowed"))) {
             return "Ссылка для сброса отклонена. Добавьте URL сброса пароля в Supabase Auth → URL Configuration.";
         }
@@ -206,9 +225,15 @@ export default function LoginPage() {
         setMsg(null);
         setLoading(true);
 
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: `${window.location.origin}/reset-password`,
-        });
+        const redirectTo = getResetRedirectUrl();
+
+        const options = redirectTo
+            ? {
+                redirectTo,
+            }
+            : undefined;
+
+        const { error } = await supabase.auth.resetPasswordForEmail(email, options);
 
         setLoading(false);
 
