@@ -1,12 +1,26 @@
-﻿"use client";
+"use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase/client";
+
+type CalcKind = "natal" | "day" | "week" | "month";
 
 type ApiResult =
-    | { kind: "natal"; text: string; meta?: any }
-    | { kind: "day"; text: string; raw?: any }
-    | { kind: "week"; text: string; raw?: any }
-    | { kind: "month"; text: string; raw?: any };
+    | { kind: "natal"; text: string; meta?: unknown }
+    | { kind: "day"; text: string; raw?: unknown }
+    | { kind: "week"; text: string; raw?: unknown }
+    | { kind: "month"; text: string; raw?: unknown };
+
+type BirthProfile = {
+    birth_date: string | null;
+    birth_time: string | null;
+    birth_city: string | null;
+};
+
+type CalcAccessOrder = {
+    id: string;
+    meta: Record<string, unknown> | null;
+};
 
 function pad2(n: number) {
     return String(n).padStart(2, "0");
@@ -16,175 +30,370 @@ function toYMD(d: Date) {
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
+function parseBirthDate(value: string | null) {
+    if (!value) return null;
+    const [y, m, d] = value.split("-").map((x) => Number.parseInt(x, 10));
+    if (!y || !m || !d) return null;
+    return { year: y, month: m, day: d };
+}
+
+function parseBirthTime(value: string | null) {
+    if (!value) return null;
+    const [h, min] = value.split(":").map((x) => Number.parseInt(x, 10));
+    if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+    return { hour: String(h).padStart(2, "0"), minute: String(min).padStart(2, "0") };
+}
+
+function modeTitle(kind: CalcKind) {
+    if (kind === "natal") return "Натальная карта";
+    if (kind === "day") return "Прогноз на день";
+    if (kind === "week") return "Прогноз на неделю";
+    return "Прогноз на месяц";
+}
+
 export default function CalculationsPage() {
-    const API = process.env.NEXT_PUBLIC_ASTRO_API_BASE || "http://127.0.0.1:8011";
+    const API = process.env.NEXT_PUBLIC_ASTRO_API_BASE?.trim() || "http://127.0.0.1:8011";
 
-    // базовые поля (можешь связать потом с profile из supabase)
-    const [year, setYear] = useState<number>(1990);
-    const [month, setMonth] = useState<number>(5);
-    const [day, setDay] = useState<number>(11);
-    const [hour, setHour] = useState<string>("12");    // строка, т.к. у тебя hour может быть "я не знаю"
-    const [minute, setMinute] = useState<string>("00");
-    const [city, setCity] = useState<string>("Москва");
+    const [profileLoading, setProfileLoading] = useState(true);
+    const [profileError, setProfileError] = useState<string | null>(null);
+    const [profile, setProfile] = useState<BirthProfile | null>(null);
 
-    // дата прогноза для day/week (target_date)
-    const [targetDate, setTargetDate] = useState<string>(toYMD(new Date()));
+    const [checkingAccess, setCheckingAccess] = useState(true);
+    const [hasPaidAccess, setHasPaidAccess] = useState(false);
+    const [paidOrder, setPaidOrder] = useState<CalcAccessOrder | null>(null);
 
     const [loading, setLoading] = useState(false);
+    const [loadingKind, setLoadingKind] = useState<CalcKind | null>(null);
+    const [payLoading, setPayLoading] = useState(false);
     const [err, setErr] = useState<string | null>(null);
     const [result, setResult] = useState<ApiResult | null>(null);
 
-    const canRun = useMemo(() => {
-        return !!city.trim() && year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
-    }, [city, year, month, day]);
+    const targetDate = toYMD(new Date());
+
+    const dateParts = useMemo(() => parseBirthDate(profile?.birth_date ?? null), [profile?.birth_date]);
+    const timeParts = useMemo(() => parseBirthTime(profile?.birth_time ?? null), [profile?.birth_time]);
+
+    const missingFields = useMemo(() => {
+        const missing: string[] = [];
+        if (!dateParts) missing.push("дата рождения");
+        if (!timeParts) missing.push("время рождения");
+        if (!profile?.birth_city?.trim()) missing.push("место рождения");
+        return missing;
+    }, [dateParts, timeParts, profile?.birth_city]);
+
+    const canRunBirth = missingFields.length === 0;
+
+    useEffect(() => {
+        (async () => {
+            setProfileLoading(true);
+            setProfileError(null);
+
+            try {
+                const { data: userData, error: userErr } = await supabase.auth.getUser();
+                if (userErr || !userData.user) {
+                    window.location.href = "/login";
+                    return;
+                }
+
+                const { data, error } = await supabase
+                    .from("profiles")
+                    .select("birth_date, birth_time, birth_city")
+                    .eq("id", userData.user.id)
+                    .maybeSingle();
+
+                if (error) {
+                    setProfileError(error.message);
+                    return;
+                }
+
+                setProfile((data ?? null) as BirthProfile | null);
+            } finally {
+                setProfileLoading(false);
+            }
+        })();
+    }, []);
+
+    useEffect(() => {
+        void refreshPaidAccess();
+    }, []);
+
+    async function refreshPaidAccess() {
+        setCheckingAccess(true);
+        try {
+            const { data: userData } = await supabase.auth.getUser();
+            const user = userData.user;
+            if (!user) {
+                setHasPaidAccess(false);
+                setPaidOrder(null);
+                return;
+            }
+
+            const { data } = await supabase
+                .from("orders")
+                .select("id, meta")
+                .eq("user_id", user.id)
+                .eq("kind", "calc_access")
+                .or("status.eq.paid,paid_at.not.is.null")
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (data?.id) {
+                setHasPaidAccess(true);
+                setPaidOrder({
+                    id: data.id as string,
+                    meta: (data.meta as Record<string, unknown> | null) ?? null,
+                });
+            } else {
+                setHasPaidAccess(false);
+                setPaidOrder(null);
+            }
+        } finally {
+            setCheckingAccess(false);
+        }
+    }
+
+    async function createPendingCalcOrder() {
+        const { data: userData } = await supabase.auth.getUser();
+        const user = userData.user;
+        if (!user) {
+            window.location.href = "/login";
+            return null;
+        }
+
+        const amountCents = Number.parseInt(process.env.NEXT_PUBLIC_CALCS_PRICE_CENTS || "99000", 10) || 99000;
+
+        const { data, error } = await supabase
+            .from("orders")
+            .insert({
+                user_id: user.id,
+                status: "pending",
+                amount_cents: amountCents,
+                currency: "RUB",
+                customer_email: user.email ?? null,
+                provider: "getcourse",
+                provider_order_id: null,
+                paid_at: null,
+                kind: "calc_access",
+                meta: { purpose: "calc_access" },
+                consumed_at: null,
+                updated_at: new Date().toISOString(),
+            })
+            .select("id")
+            .single();
+
+        if (error) {
+            setErr(error.message);
+            return null;
+        }
+
+        return data.id as string;
+    }
+
+    function getCalcPayUrl(localOrderId: string) {
+        const base = process.env.NEXT_PUBLIC_GC_CALCS_URL;
+        if (!base) return "";
+
+        const u = new URL(base);
+        u.searchParams.set("local_order_id", localOrderId);
+        u.searchParams.set("kind", "calc_access");
+        return u.toString();
+    }
+
+    function buildCacheKey(kind: CalcKind) {
+        return JSON.stringify({
+            kind,
+            year: dateParts?.year,
+            month: dateParts?.month,
+            day: dateParts?.day,
+            hour: timeParts?.hour,
+            minute: timeParts?.minute,
+            city: profile?.birth_city?.trim().toLowerCase(),
+            targetDate: kind === "day" ? targetDate : null,
+        });
+    }
+
+    function readCachedResult(kind: CalcKind): ApiResult | null {
+        if (!paidOrder?.meta || kind === "natal") return null;
+        const cacheKey = buildCacheKey(kind);
+        const calcsCache = (paidOrder.meta.calcs_cache as Record<string, unknown> | undefined) || {};
+        const row = calcsCache[cacheKey] as { text?: string; raw?: unknown } | undefined;
+        if (!row?.text) return null;
+        return { kind, text: row.text, raw: row.raw } as ApiResult;
+    }
+
+    async function saveCachedResult(kind: Exclude<CalcKind, "natal">, payload: { text: string; raw: unknown }) {
+        if (!paidOrder?.id) return;
+
+        const cacheKey = buildCacheKey(kind);
+        const existingMeta = (paidOrder.meta ?? {}) as Record<string, unknown>;
+        const existingCache = (existingMeta.calcs_cache as Record<string, unknown> | undefined) ?? {};
+
+        const nextMeta: Record<string, unknown> = {
+            ...existingMeta,
+            calcs_cache: {
+                ...existingCache,
+                [cacheKey]: {
+                    ...payload,
+                    saved_at: new Date().toISOString(),
+                },
+            },
+        };
+
+        const { error } = await supabase
+            .from("orders")
+            .update({ meta: nextMeta, updated_at: new Date().toISOString() })
+            .eq("id", paidOrder.id);
+
+        if (!error) {
+            setPaidOrder({ ...paidOrder, meta: nextMeta });
+        }
+    }
 
     async function callJson(url: string) {
-        const res = await fetch(url, { method: "GET" });
+        let res: Response;
+
+        try {
+            res = await fetch(url, { method: "GET" });
+        } catch {
+            throw new Error("Сервис расчётов временно недоступен. Проверьте подключение к API и попробуйте ещё раз.");
+        }
+
         const json = await res.json().catch(() => null);
         if (!res.ok) {
-            // FastAPI обычно отдаёт { detail: "..." }
             const msg = json?.detail || json?.message || `HTTP ${res.status}`;
             throw new Error(msg);
         }
+
         return json;
     }
 
-    async function runNatal() {
-        setLoading(true);
-        setErr(null);
-        setResult(null);
-        try {
-            const qs = new URLSearchParams({
-                year: String(year),
-                month: String(month),
-                day: String(day),
-                city_name: city,
-                // hour/minute у тебя Optional[str], поэтому передаём как строку
-                hour: hour,
-                minute: minute,
-            });
+    async function run(kind: CalcKind) {
+        if (!canRunBirth || profileLoading || checkingAccess) return;
 
-            const json = await callJson(`${API}/natal?${qs.toString()}`);
-
-            setResult({
-                kind: "natal",
-                text: json?.natal_chart || "Пустой ответ",
-                meta: json,
-            });
-        } catch (e: any) {
-            setErr(e?.message || "Ошибка");
-        } finally {
-            setLoading(false);
+        if (kind !== "natal" && !hasPaidAccess) {
+            setErr("Прогнозы на день/неделю/месяц доступны после покупки. Сначала оплатите доступ.");
+            return;
         }
-    }
 
-    async function runDay() {
-        setLoading(true);
-        setErr(null);
-        setResult(null);
-        try {
-            const qs = new URLSearchParams({
-                year: String(year),
-                month: String(month),
-                day: String(day),
-                hour: String(parseInt(hour || "12", 10) || 12),
-                minute: String(parseInt(minute || "0", 10) || 0),
-                city_name: city,
-                target_date: targetDate, // твоя ручка поддерживает target_date
-            });
-
-            const json = await callJson(`${API}/transits_day?${qs.toString()}`);
-
-            // json там список, берём первый элемент
-            const item = Array.isArray(json) ? json[0] : json;
-
-            const lines: string[] = [];
-            if (item?.day_summary) lines.push(item.day_summary);
-            if (Array.isArray(item?.aspects_text)) lines.push("", ...item.aspects_text);
-
-            setResult({
-                kind: "day",
-                text: lines.join("\n") || "Пустой ответ",
-                raw: json,
-            });
-        } catch (e: any) {
-            setErr(e?.message || "Ошибка");
-        } finally {
-            setLoading(false);
+        if (kind !== "natal") {
+            const cached = readCachedResult(kind);
+            if (cached) {
+                setErr(null);
+                setResult(cached);
+                return;
+            }
         }
-    }
 
-    async function runWeek() {
         setLoading(true);
+        setLoadingKind(kind);
         setErr(null);
         setResult(null);
-        try {
-            // У тебя есть /transits_week_theme и /transits_week.
-            // Для UI проще theme (возвращает summary_text по дням).
-            const qs = new URLSearchParams({
-                year: String(year),
-                month: String(month),
-                day: String(day),
-                hour: String(parseInt(hour || "12", 10) || 12),
-                minute: String(parseInt(minute || "0", 10) || 0),
-                city_name: city,
-            });
 
-            const json = await callJson(`${API}/transits_week_theme?${qs.toString()}`);
-
-            const arr = json?.weekly_theme_forecast || [];
-            const text = Array.isArray(arr)
-                ? arr.map((x: any) => x.summary_text).join("\n\n")
-                : JSON.stringify(json, null, 2);
-
-            setResult({ kind: "week", text: text || "Пустой ответ", raw: json });
-        } catch (e: any) {
-            setErr(e?.message || "Ошибка");
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    async function runMonth() {
-        setLoading(true);
-        setErr(null);
-        setResult(null);
         try {
             const qs = new URLSearchParams({
-                year: String(year),
-                month: String(month),
-                day: String(day),
-                hour: String(parseInt(hour || "12", 10) || 12),
-                minute: String(parseInt(minute || "0", 10) || 0),
-                city_name: city,
+                year: String(dateParts!.year),
+                month: String(dateParts!.month),
+                day: String(dateParts!.day),
+                hour: timeParts!.hour,
+                minute: timeParts!.minute,
+                city_name: profile!.birth_city!.trim(),
             });
 
-            const json = await callJson(`${API}/transits_month?${qs.toString()}`);
+            if (kind === "day") qs.set("target_date", targetDate);
+
+            const path =
+                kind === "natal"
+                    ? "/natal"
+                    : kind === "day"
+                        ? "/transits_day"
+                        : kind === "week"
+                            ? "/transits_week_theme"
+                            : "/transits_month";
+
+            const json = await callJson(`${API}${path}?${qs.toString()}`);
+
+            if (kind === "natal") {
+                setResult({ kind: "natal", text: json?.natal_chart || "Пустой ответ", meta: json });
+                return;
+            }
+
+            if (kind === "day") {
+                const item = Array.isArray(json) ? json[0] : json;
+                const lines: string[] = [];
+                if (item?.day_summary) lines.push(String(item.day_summary));
+                if (Array.isArray(item?.aspects_text)) lines.push("", ...item.aspects_text.map((x: unknown) => String(x)));
+                const text = lines.join("\n") || "Пустой ответ";
+                const out: ApiResult = { kind: "day", text, raw: json };
+                setResult(out);
+                await saveCachedResult("day", { text, raw: json });
+                return;
+            }
+
+            if (kind === "week") {
+                const arr = json?.weekly_theme_forecast || [];
+                const text = Array.isArray(arr)
+                    ? arr.map((x: { summary_text?: string }) => x.summary_text || "").join("\n\n")
+                    : JSON.stringify(json, null, 2);
+                const out: ApiResult = { kind: "week", text: text || "Пустой ответ", raw: json };
+                setResult(out);
+                await saveCachedResult("week", { text: out.text, raw: json });
+                return;
+            }
 
             const arr = json?.month_transits || [];
             const text = Array.isArray(arr) && arr.length
                 ? arr
                     .slice(0, 200)
-                    .map((x: any) => `${x.date} — ${x.description}`)
+                    .map((x: { date?: string; description?: string }) => `${x.date} — ${x.description}`)
                     .join("\n")
                 : "Нет точных благоприятных аспектов в ближайшие 30 дней.";
 
-            setResult({ kind: "month", text, raw: json });
-        } catch (e: any) {
-            setErr(e?.message || "Ошибка");
+            const out: ApiResult = { kind: "month", text, raw: json };
+            setResult(out);
+            await saveCachedResult("month", { text, raw: json });
+        } catch (e) {
+            setErr(e instanceof Error ? e.message : "Ошибка");
         } finally {
             setLoading(false);
+            setLoadingKind(null);
         }
     }
 
-    function shiftTarget(days: number) {
-        const d = new Date(targetDate + "T00:00:00");
-        d.setDate(d.getDate() + days);
-        setTargetDate(toYMD(d));
+    async function buyAccess() {
+        setPayLoading(true);
+        setErr(null);
+        try {
+            const localOrderId = await createPendingCalcOrder();
+            if (!localOrderId) return;
+
+            const url = getCalcPayUrl(localOrderId);
+            if (!url) {
+                setErr("Заказ создан, но ссылка на оплату не задана. Добавьте NEXT_PUBLIC_GC_CALCS_URL.");
+                return;
+            }
+
+            window.location.href = url;
+        } finally {
+            setPayLoading(false);
+        }
     }
+
+    const disableRunButtons = !canRunBirth || loading || profileLoading || checkingAccess;
 
     return (
         <div style={{ display: "grid", gap: 14 }}>
+            <style jsx>{`
+                @keyframes orbit {
+                    0% { transform: rotate(0deg) translateX(22px) rotate(0deg); }
+                    100% { transform: rotate(360deg) translateX(22px) rotate(-360deg); }
+                }
+                @keyframes pulse {
+                    0%, 100% { transform: scale(1); opacity: 0.85; }
+                    50% { transform: scale(1.16); opacity: 1; }
+                }
+            `}</style>
+
             <div
                 style={{
                     padding: 18,
@@ -195,47 +404,51 @@ export default function CalculationsPage() {
             >
                 <div style={{ fontSize: 24, fontWeight: 950 }}>Расчёты</div>
                 <div style={{ marginTop: 6, color: "rgba(245,240,233,.75)" }}>
-                    Натальная карта и прогнозы (день / неделя / месяц).
+                    Натальная карта — бесплатно. Прогнозы (день / неделя / месяц) — после покупки.
                 </div>
 
-                <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 10 }}>
-                    <Field label="Год">
-                        <input value={String(year)} onChange={(e) => setYear(parseInt(e.target.value || "0", 10) || 0)} style={inp()} />
-                    </Field>
-                    <Field label="Месяц">
-                        <input value={String(month)} onChange={(e) => setMonth(parseInt(e.target.value || "0", 10) || 0)} style={inp()} />
-                    </Field>
-                    <Field label="День">
-                        <input value={String(day)} onChange={(e) => setDay(parseInt(e.target.value || "0", 10) || 0)} style={inp()} />
-                    </Field>
-                    <Field label="Час">
-                        <input value={hour} onChange={(e) => setHour(e.target.value)} placeholder='например "12" или "я не знаю"' style={inp()} />
-                    </Field>
-                    <Field label="Минуты">
-                        <input value={minute} onChange={(e) => setMinute(e.target.value)} style={inp()} />
-                    </Field>
-                    <Field label="Город">
-                        <input value={city} onChange={(e) => setCity(e.target.value)} style={inp()} />
-                    </Field>
-                </div>
+                {profileLoading && (
+                    <div style={{ marginTop: 14, color: "rgba(245,240,233,.75)" }}>
+                        Загружаем данные профиля…
+                    </div>
+                )}
+
+                {!profileLoading && (profileError || missingFields.length > 0) && (
+                    <div style={{ marginTop: 14, padding: 14, borderRadius: 14, border: "1px solid rgba(255,190,90,.26)", background: "rgba(255,190,90,.08)", color: "rgba(245,240,233,.92)" }}>
+                        {profileError
+                            ? `Не удалось загрузить профиль: ${profileError}`
+                            : `Чтобы открыть расчёты, сначала заполните в профиле: ${missingFields.join(", ")}.`}
+                    </div>
+                )}
+
+                {!checkingAccess && !hasPaidAccess && (
+                    <div style={{ marginTop: 12, padding: 12, borderRadius: 14, border: "1px solid rgba(120,230,255,.26)", background: "rgba(120,230,255,.08)", color: "rgba(245,240,233,.92)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                        <div style={{ fontSize: 13 }}>Доступ к прогнозам (день/неделя/месяц) ещё не куплен.</div>
+                        <button onClick={() => void buyAccess()} disabled={payLoading} style={buyBtn()}>
+                            {payLoading ? "Создаём заказ…" : "Купить доступ к прогнозам"}
+                        </button>
+                    </div>
+                )}
+
+                {!checkingAccess && hasPaidAccess && (
+                    <div style={{ marginTop: 12, color: "rgba(120,230,255,.92)", fontSize: 13, fontWeight: 700 }}>
+                        ✓ Доступ к прогнозам активен. Готовые результаты сохраняются и повторно отдаются из покупки.
+                    </div>
+                )}
 
                 <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                    <button disabled={!canRun || loading} onClick={() => void runNatal()} style={btn()}>
-                        {loading ? "…" : "Натальная карта"}
+                    <button disabled={disableRunButtons} onClick={() => void run("natal")} style={btn()}>
+                        {loadingKind === "natal" ? "…" : modeTitle("natal")}
                     </button>
-                    <button disabled={!canRun || loading} onClick={() => void runDay()} style={btn()}>
-                        {loading ? "…" : "Прогноз на день"}
+                    <button disabled={disableRunButtons || !hasPaidAccess} onClick={() => void run("day")} style={btn(!hasPaidAccess)}>
+                        {loadingKind === "day" ? "…" : modeTitle("day")}
                     </button>
-                    <button disabled={!canRun || loading} onClick={() => void runWeek()} style={btn()}>
-                        {loading ? "…" : "Прогноз на неделю"}
+                    <button disabled={disableRunButtons || !hasPaidAccess} onClick={() => void run("week")} style={btn(!hasPaidAccess)}>
+                        {loadingKind === "week" ? "…" : modeTitle("week")}
                     </button>
-                    <button disabled={!canRun || loading} onClick={() => void runMonth()} style={btn()}>
-                        {loading ? "…" : "Прогноз на месяц"}
+                    <button disabled={disableRunButtons || !hasPaidAccess} onClick={() => void run("month")} style={btn(!hasPaidAccess)}>
+                        {loadingKind === "month" ? "…" : modeTitle("month")}
                     </button>
-
-                    <div style={{ flex: 1 }} />
-
-
                 </div>
             </div>
 
@@ -257,13 +470,55 @@ export default function CalculationsPage() {
             >
                 <div style={{ fontSize: 16, fontWeight: 950, marginBottom: 10 }}>Результат</div>
 
-                {!result && (
+                {loading && (
+                    <div style={{
+                        display: "grid",
+                        placeItems: "center",
+                        minHeight: 180,
+                        borderRadius: 16,
+                        border: "1px solid rgba(224,197,143,.10)",
+                        background: "rgba(10,18,38,.18)",
+                    }}>
+                        <div style={{ position: "relative", width: 70, height: 70 }}>
+                            <div style={{
+                                width: 26,
+                                height: 26,
+                                borderRadius: "50%",
+                                position: "absolute",
+                                top: "50%",
+                                left: "50%",
+                                transform: "translate(-50%, -50%)",
+                                background: "radial-gradient(circle, rgba(255,216,142,1) 0%, rgba(255,173,92,1) 100%)",
+                                boxShadow: "0 0 26px rgba(255,190,90,.45)",
+                                animation: "pulse 1.2s ease-in-out infinite",
+                            }} />
+                            <div style={{
+                                width: 10,
+                                height: 10,
+                                borderRadius: "50%",
+                                position: "absolute",
+                                top: "50%",
+                                left: "50%",
+                                marginLeft: -5,
+                                marginTop: -5,
+                                background: "rgba(120,230,255,1)",
+                                boxShadow: "0 0 10px rgba(120,230,255,.9)",
+                                animation: "orbit 1.4s linear infinite",
+                            }} />
+                        </div>
+                        <div style={{ marginTop: 12, color: "rgba(245,240,233,.82)", fontWeight: 700 }}>
+                            Считаем: {loadingKind ? modeTitle(loadingKind) : "расчёт"}…
+                        </div>
+                    </div>
+                )}
+
+                {!loading && !result && (
                     <div style={{ color: "rgba(245,240,233,.70)" }}>
                         Нажми кнопку расчёта — результат появится здесь.
                     </div>
                 )}
 
-                {result && (
+                {!loading && result && (
                     <pre
                         style={{
                             margin: 0,
@@ -278,56 +533,34 @@ export default function CalculationsPage() {
                             lineHeight: 1.55,
                         }}
                     >
-            {result.text}
-          </pre>
+                        {result.text}
+                    </pre>
                 )}
             </div>
         </div>
     );
 }
 
-function Field({ label, children }: any) {
-    return (
-        <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>{label}</div>
-            {children}
-        </div>
-    );
-}
-
-function inp(): React.CSSProperties {
-    return {
-        width: "100%",
-        padding: "10px 12px",
-        borderRadius: 14,
-        border: "1px solid rgba(224,197,143,.14)",
-        background: "rgba(10,18,38,.28)",
-        color: "rgba(245,240,233,.92)",
-        outline: "none",
-    };
-}
-
-function btn(): React.CSSProperties {
+function btn(disabledStyle = false): React.CSSProperties {
     return {
         borderRadius: 14,
         padding: "10px 12px",
-        border: "1px solid rgba(224,197,143,.18)",
-        background: "rgba(224,197,143,.10)",
+        border: disabledStyle ? "1px solid rgba(224,197,143,.10)" : "1px solid rgba(224,197,143,.18)",
+        background: disabledStyle ? "rgba(17,34,80,.18)" : "rgba(224,197,143,.10)",
         color: "rgba(245,240,233,.92)",
         fontWeight: 950,
         cursor: "pointer",
     };
 }
 
-function iconBtn(): React.CSSProperties {
+function buyBtn(): React.CSSProperties {
     return {
         borderRadius: 12,
         padding: "8px 10px",
-        border: "1px solid rgba(224,197,143,.18)",
-        background: "rgba(17,34,80,.16)",
-        color: "rgba(245,240,233,.92)",
+        border: "1px solid rgba(120,230,255,.26)",
+        background: "rgba(120,230,255,.16)",
+        color: "rgba(245,240,233,.95)",
         fontWeight: 900,
         cursor: "pointer",
-        fontSize: 12,
     };
 }
