@@ -1,0 +1,5 @@
+cd /opt/astro-platform
+git pull
+npm ci
+npm run build
+pm2 restart astro-platform
