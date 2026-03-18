@@ -1,26 +1,61 @@
-﻿"use client";
+"use client";
 
-import React from "react";
-import Link from "next/link";
+import React, { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import MoonRouteTransition from "@/components/MoonRouteTransition";
 import { CabinetLoadingProvider, useCabinetLoading } from "@/components/cabinet/cabinetLoading";
 
-
-const NAV = [
-    { href: "/cabinet", label: "Дашборд" },
-    { href: "/cabinet/calculations", label: "Расчёты" },
+const BASE_NAV = [
+    { href: "/cabinet/profile", label: "Ваши данные" },
+    { href: "/cabinet/calculations", label: "Прогнозы" },
     { href: "/cabinet/purchases", label: "Покупки" },
-    { href: "/cabinet/profile", label: "Профиль" },
     { href: "/cabinet/support", label: "Поддержка" },
-    { href: "/cabinet/admin", label: "Админ" },
-];
+] as const;
+
+const ADMIN_NAV = { href: "/cabinet/admin", label: "Админ" } as const;
 
 function Shell({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
     const router = useRouter();
     const { loading, startLoading } = useCabinetLoading();
+    const [isAdmin, setIsAdmin] = useState(false);
+
+    useEffect(() => {
+        let active = true;
+
+        async function loadAdminState() {
+            const { data } = await supabase.auth.getSession();
+            const token = data.session?.access_token;
+
+            if (!token) {
+                if (pathname.startsWith("/cabinet/admin")) {
+                    window.location.href = "/login";
+                }
+                return;
+            }
+
+            const res = await fetch("/api/admin/me", {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const json = await res.json().catch(() => null);
+            const canOpenAdmin = !!json?.is_admin;
+
+            if (!active) return;
+            setIsAdmin(canOpenAdmin);
+
+            if (!canOpenAdmin && pathname.startsWith("/cabinet/admin")) {
+                window.location.href = "/cabinet";
+            }
+        }
+
+        void loadAdminState();
+        return () => {
+            active = false;
+        };
+    }, [pathname]);
+
+    const navItems = useMemo(() => (isAdmin ? [...BASE_NAV, ADMIN_NAV] : [...BASE_NAV]), [isAdmin]);
 
     async function signOut() {
         await supabase.auth.signOut();
@@ -56,7 +91,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                     </div>
 
                     <nav style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
-                        {NAV.map((item) => {
+                        {navItems.map((item) => {
                             const active = pathname === item.href || (item.href !== "/cabinet" && pathname.startsWith(item.href));
 
                             return (
@@ -64,7 +99,6 @@ function Shell({ children }: { children: React.ReactNode }) {
                                     key={item.href}
                                     href={item.href}
                                     onClick={(e) => {
-                                        // чтобы не запускать лишний раз
                                         if (active) return;
 
                                         e.preventDefault();
@@ -106,7 +140,6 @@ function Shell({ children }: { children: React.ReactNode }) {
                 </div>
             </header>
 
-            {/* ✅ Луна крутится пока loading=true */}
             <MoonRouteTransition show={loading} />
 
             <main style={{ maxWidth: 1200, margin: "0 auto", padding: "18px 16px" }}>{children}</main>
