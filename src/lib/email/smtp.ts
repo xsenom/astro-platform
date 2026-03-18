@@ -42,12 +42,13 @@ async function writeAndRead(socket: net.Socket | tls.TLSSocket, command: string,
     return response;
 }
 
-function buildMessage(params: { from: string; to: string; subject: string; text?: string; html?: string }) {
+function buildMessage(params: { from: string; to: string; subject: string; text?: string; html?: string; replyTo?: string }) {
     const boundary = `astro_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const headers = [
         `From: ${params.from}`,
         `To: ${params.to}`,
         `Subject: =?UTF-8?B?${Buffer.from(params.subject, "utf8").toString("base64")}?=`,
+        ...(params.replyTo ? [`Reply-To: ${params.replyTo}`] : []),
         "MIME-Version: 1.0",
         `Content-Type: multipart/alternative; boundary=\"${boundary}\"`,
         "",
@@ -75,6 +76,7 @@ export async function sendSmtpMail(params: {
     subject: string;
     text?: string;
     html?: string;
+    replyTo?: string;
 }) {
     const socket = params.secure
         ? tls.connect({ host: params.host, port: params.port, servername: params.host })

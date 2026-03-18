@@ -10,7 +10,7 @@ type CalculationRow = { id: string; user_id: string; calc_type_id?: string | nul
 type SupportThreadRow = { id: string; created_at: string; last_message_at: string; updated_at: string | null; user_id: string; category: string; subject: string; status: string };
 type SupportMsgRow = { id: string; created_at: string; thread_id: string; author_user_id: string | null; author_admin_id: string | null; is_admin: boolean; message: string; attachment_url: string | null };
 type IdRow = { id: string };
-type SegmentKey = "all" | "paid" | "no_paid" | "calculations" | "inactive_30d";
+type SegmentKey = "all" | "paid" | "no_paid" | "calculations" | "inactive_30d" | "admins_test";
 type EmailCampaignRow = { id: string; created_at: string; segment_key: SegmentKey; subject: string; status: string; recipients_count: number; sent_count: number; failed_count: number; created_by: string };
 type EmailSegmentCounts = Record<SegmentKey, number>;
 
@@ -20,7 +20,10 @@ const SEGMENT_LABELS: Record<SegmentKey, string> = {
     no_paid: "Без оплат",
     calculations: "Пользователи с расчётами",
     inactive_30d: "Неактивные 30 дней",
+    admins_test: "Тест администраторам",
 };
+
+const LIVE_SEGMENTS: SegmentKey[] = ["all", "paid", "no_paid", "calculations", "inactive_30d"];
 
 function PaperclipIcon({ size = 18 }: { size?: number }) {
     return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.44 11.05l-8.49 8.49a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.19 9.19a2 2 0 01-2.83-2.83l8.49-8.49" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
@@ -49,7 +52,7 @@ export default function AdminPage() {
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const bottomRef = useRef<HTMLDivElement | null>(null);
     const [emailCampaigns, setEmailCampaigns] = useState<EmailCampaignRow[]>([]);
-    const [emailSegments, setEmailSegments] = useState<EmailSegmentCounts>({ all: 0, paid: 0, no_paid: 0, calculations: 0, inactive_30d: 0 });
+    const [emailSegments, setEmailSegments] = useState<EmailSegmentCounts>({ all: 0, paid: 0, no_paid: 0, calculations: 0, inactive_30d: 0, admins_test: 0 });
     const [selectedSegment, setSelectedSegment] = useState<SegmentKey>("all");
     const [mailSubject, setMailSubject] = useState("");
     const [mailHtml, setMailHtml] = useState("");
@@ -117,7 +120,7 @@ export default function AdminPage() {
         setOrders(json.orders || []);
         setCalcs(json.calculations || []);
         setEmailCampaigns(json.email_campaigns || []);
-        setEmailSegments(json.email_segments || { all: 0, paid: 0, no_paid: 0, calculations: 0, inactive_30d: 0 });
+        setEmailSegments(json.email_segments || { all: 0, paid: 0, no_paid: 0, calculations: 0, inactive_30d: 0, admins_test: 0 });
         await loadSupportThreads();
         setLoading(false);
     }
@@ -235,7 +238,7 @@ export default function AdminPage() {
         }
     }
 
-    async function sendEmailCampaign() {
+    async function sendEmailCampaign(testMode = false) {
         setErr(null);
         setMailResult(null);
         setMailSending(true);
@@ -245,13 +248,13 @@ export default function AdminPage() {
                 window.location.href = "/login";
                 return;
             }
-            const res = await fetch("/api/admin/email-campaigns", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ segment_key: selectedSegment, subject: mailSubject, html: mailHtml, text: mailText }) });
+            const res = await fetch("/api/admin/email-campaigns", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ segment_key: selectedSegment, subject: mailSubject, html: mailHtml, text: mailText, test_mode: testMode }) });
             const json = await res.json().catch(() => null);
             if (!res.ok || !json?.ok) {
                 setErr(json?.error || "Не удалось отправить рассылку.");
                 return;
             }
-            setMailResult(`Готово: ${json.sent_count}/${json.recipients_count} писем отправлено, ошибок — ${json.failed_count}.`);
+            setMailResult(testMode ? `Тестовая отправка админам: ${json.sent_count}/${json.recipients_count}, ошибок — ${json.failed_count}.` : `Готово: ${json.sent_count}/${json.recipients_count} писем отправлено, ошибок — ${json.failed_count}.`);
             setMailSubject("");
             setMailHtml("");
             setMailText("");
@@ -296,11 +299,11 @@ export default function AdminPage() {
                 <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 380px) 1fr", gap: 14 }}>
                     <Card title="Сегменты рассылки">
                         <div style={{ display: "grid", gap: 10 }}>
-                            {(Object.keys(SEGMENT_LABELS) as SegmentKey[]).map((segment) => {
+                            {LIVE_SEGMENTS.map((segment) => {
                                 const active = selectedSegment === segment;
                                 return <button key={segment} onClick={() => setSelectedSegment(segment)} style={{ textAlign: "left", padding: 14, borderRadius: 16, border: active ? "1px solid rgba(224,197,143,.28)" : "1px solid rgba(224,197,143,.10)", background: active ? "rgba(224,197,143,.08)" : "rgba(10,18,38,.18)", color: "rgba(245,240,233,.92)", cursor: "pointer" }}><div style={{ fontWeight: 900 }}>{SEGMENT_LABELS[segment]}</div><div style={{ marginTop: 6, fontSize: 12, color: "rgba(245,240,233,.68)" }}>Получателей: {emailSegments[segment] ?? 0}</div></button>;
                             })}
-                            <div style={{ padding: 12, borderRadius: 14, background: "rgba(10,18,38,.18)", fontSize: 12, color: "rgba(245,240,233,.72)" }}>SMTP берётся из env: <strong>SMTP_HOST</strong>, <strong>SMTP_PORT</strong>, <strong>SMTP_USER</strong>, <strong>SMTP_PASS</strong>, <strong>SMTP_FROM</strong>.</div>
+                            <div style={{ padding: 12, borderRadius: 14, background: "rgba(10,18,38,.18)", fontSize: 12, color: "rgba(245,240,233,.72)" }}>SMTP берётся из env: <strong>SMTP_HOST</strong>, <strong>SMTP_PORT</strong>, <strong>SMTP_USER</strong>, <strong>SMTP_PASS</strong>, <strong>SMTP_FROM</strong>. Ответы на письма уйдут на <strong>SMTP_REPLY_TO</strong> или обратно на <strong>SMTP_FROM</strong>. Тестовый прогон идёт только по адресам администраторов: <strong>{emailSegments.admins_test ?? 0}</strong>.</div>
                         </div>
                     </Card>
                     <Card title="Новая рассылка">
@@ -310,8 +313,11 @@ export default function AdminPage() {
                             <textarea value={mailText} onChange={(e) => setMailText(e.target.value)} placeholder="Текстовая версия письма" style={{ ...inputStyle, minHeight: 120, resize: "vertical" }} />
                             <textarea value={mailHtml} onChange={(e) => setMailHtml(e.target.value)} placeholder="HTML-версия письма" style={{ ...inputStyle, minHeight: 220, resize: "vertical", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }} />
                             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                                <div style={{ fontSize: 12, color: "rgba(245,240,233,.65)" }}>Письма уходят персонально каждому адресу, чтобы не светить базу получателей.</div>
-                                <button onClick={() => void sendEmailCampaign()} disabled={mailSending || !mailSubject.trim() || (!mailText.trim() && !mailHtml.trim())} style={{ borderRadius: 14, padding: "12px 16px", border: "1px solid rgba(224,197,143,.20)", background: "rgba(224,197,143,.12)", color: "rgba(245,240,233,.92)", fontWeight: 950, cursor: mailSending ? "default" : "pointer", opacity: mailSending ? 0.75 : 1 }}> {mailSending ? "Отправка…" : "Отправить рассылку"}</button>
+                                <div style={{ fontSize: 12, color: "rgba(245,240,233,.65)" }}>Письма уходят персонально каждому адресу, чтобы не светить базу получателей. Сначала можно сделать тест администраторам.</div>
+                                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                    <button onClick={() => void sendEmailCampaign(true)} disabled={mailSending || !mailSubject.trim() || (!mailText.trim() && !mailHtml.trim())} style={{ borderRadius: 14, padding: "12px 16px", border: "1px solid rgba(120,230,255,.20)", background: "rgba(120,230,255,.10)", color: "rgba(245,240,233,.92)", fontWeight: 950, cursor: mailSending ? "default" : "pointer", opacity: mailSending ? 0.75 : 1 }}> {mailSending ? "Отправка…" : "Тест администраторам"}</button>
+                                    <button onClick={() => void sendEmailCampaign(false)} disabled={mailSending || !mailSubject.trim() || (!mailText.trim() && !mailHtml.trim())} style={{ borderRadius: 14, padding: "12px 16px", border: "1px solid rgba(224,197,143,.20)", background: "rgba(224,197,143,.12)", color: "rgba(245,240,233,.92)", fontWeight: 950, cursor: mailSending ? "default" : "pointer", opacity: mailSending ? 0.75 : 1 }}> {mailSending ? "Отправка…" : "Отправить рассылку"}</button>
+                                </div>
                             </div>
                         </div>
                     </Card>

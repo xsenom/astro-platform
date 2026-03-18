@@ -4,7 +4,7 @@ import { sendSmtpMail } from "@/lib/email/smtp";
 
 export const runtime = "nodejs";
 
-type SegmentKey = "all" | "paid" | "no_paid" | "calculations" | "inactive_30d";
+type SegmentKey = "all" | "paid" | "no_paid" | "calculations" | "inactive_30d" | "admins_test";
 
 type CampaignRecipient = {
     id: string;
@@ -17,7 +17,7 @@ function sanitizeRecipient(recipient: CampaignRecipient): CampaignRecipient {
     return { id: recipient.id, email: recipient.email, full_name: recipient.full_name };
 }
 
-const SEGMENTS: Array<{ key: SegmentKey; label: string }> = [
+const LIVE_SEGMENTS: Array<{ key: Exclude<SegmentKey, "admins_test">; label: string }> = [
     { key: "all", label: "Вся база" },
     { key: "paid", label: "С оплатой" },
     { key: "no_paid", label: "Без оплат" },
@@ -30,7 +30,31 @@ function getEnv(name: string): string | null {
     return value && value.trim() ? value.trim() : null;
 }
 
-async function getRecipients(segment: SegmentKey): Promise<CampaignRecipient[]> {
+async function getAdminRecipients(): Promise<CampaignRecipient[]> {
+    const { data: admins, error: adminsError } = await getAdminClient().from("admin_users").select("user_id");
+    if (adminsError) throw new Error(adminsError.message);
+
+    const adminIds = (admins ?? []).map((row) => row.user_id).filter(Boolean);
+    if (!adminIds.length) return [];
+
+    const { data: profiles, error: profilesError } = await getAdminClient()
+        .from("profiles")
+        .select("id, email, full_name")
+        .in("id", adminIds)
+        .not("email", "is", null);
+
+    if (profilesError) throw new Error(profilesError.message);
+
+    return (profiles ?? [])
+        .filter((profile) => typeof profile.email === "string" && profile.email.trim())
+        .map((profile) => ({
+            id: profile.id,
+            email: String(profile.email).trim(),
+            full_name: profile.full_name,
+        }));
+}
+
+async function getRecipients(segment: Exclude<SegmentKey, "admins_test">): Promise<CampaignRecipient[]> {
     const { data: profiles, error: profilesError } = await getAdminClient()
         .from("profiles")
         .select("id, email, full_name, updated_at")
@@ -96,34 +120,37 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}));
     const segmentKey = String(body.segment_key || "all") as SegmentKey;
+    const isTest = body.test_mode === true;
+    const resolvedSegmentKey: SegmentKey = isTest ? "admins_test" : segmentKey;
     const subject = String(body.subject || "").trim();
     const html = String(body.html || "").trim();
     const text = String(body.text || "").trim();
 
-    if (!SEGMENTS.some((segment) => segment.key === segmentKey)) {
+    if (!isTest && !LIVE_SEGMENTS.some((segment) => segment.key === segmentKey)) {
         return NextResponse.json({ ok: false, error: "Unknown segment" }, { status: 400 });
     }
 
     if (!subject) return NextResponse.json({ ok: false, error: "Укажите тему письма." }, { status: 400 });
     if (!html && !text) return NextResponse.json({ ok: false, error: "Добавьте HTML или текст письма." }, { status: 400 });
 
-    const recipients = await getRecipients(segmentKey);
+    const recipients = isTest ? await getAdminRecipients() : await getRecipients(segmentKey as Exclude<SegmentKey, "admins_test">);
     if (!recipients.length) {
         return NextResponse.json({ ok: false, error: "В выбранном сегменте нет получателей." }, { status: 400 });
     }
 
     const from = getEnv("SMTP_FROM");
+    const replyTo = getEnv("SMTP_REPLY_TO") || from;
     if (!from) return NextResponse.json({ ok: false, error: "Не задан SMTP_FROM." }, { status: 500 });
 
     const campaignInsert = await getAdminClient()
         .from("email_campaigns")
         .insert({
             created_by: admin.userId,
-            segment_key: segmentKey,
+            segment_key: resolvedSegmentKey,
             subject,
             html_body: html || null,
             text_body: text || null,
-            status: "sending",
+            status: isTest ? "sending_test" : "sending",
             recipients_count: recipients.length,
         })
         .select("id")
@@ -149,6 +176,7 @@ export async function POST(req: NextRequest) {
                 subject,
                 text: text || undefined,
                 html: html || undefined,
+                replyTo: replyTo || undefined,
             });
             sent += 1;
             recipientLogs.push({ campaign_id: campaignId, profile_id: recipient.id, email: recipient.email, status: "sent", error_message: null });
@@ -168,7 +196,7 @@ export async function POST(req: NextRequest) {
         await getAdminClient().from("email_campaign_recipients").insert(recipientLogs);
     }
 
-    const status = failed > 0 ? (sent > 0 ? "partial" : "failed") : "sent";
+    const status = failed > 0 ? (sent > 0 ? (isTest ? "partial_test" : "partial") : (isTest ? "failed_test" : "failed")) : (isTest ? "sent_test" : "sent");
 
     await getAdminClient()
         .from("email_campaigns")
@@ -182,5 +210,7 @@ export async function POST(req: NextRequest) {
         sent_count: sent,
         failed_count: failed,
         recipients_count: recipients.length,
+        reply_to: replyTo,
+        test_mode: isTest,
     });
 }

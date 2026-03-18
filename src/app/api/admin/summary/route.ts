@@ -3,21 +3,23 @@ import { getAdminAuth, getAdminClient } from "@/lib/admin/auth";
 
 export const runtime = "nodejs";
 
-type SegmentKey = "all" | "paid" | "no_paid" | "calculations" | "inactive_30d";
+type SegmentKey = "all" | "paid" | "no_paid" | "calculations" | "inactive_30d" | "admins_test";
 
 async function getSegmentCounts() {
-    const [{ count: allCount, error: allErr }, { data: paidRows, error: paidErr }, { data: calcRows, error: calcErr }, { count: inactiveCount, error: inactiveErr }] =
+    const [{ count: allCount, error: allErr }, { data: paidRows, error: paidErr }, { data: calcRows, error: calcErr }, { count: inactiveCount, error: inactiveErr }, { count: adminsCount, error: adminsErr }] =
         await Promise.all([
             getAdminClient().from("profiles").select("id", { count: "exact", head: true }),
             getAdminClient().from("orders").select("user_id").eq("status", "paid"),
             getAdminClient().from("calculations").select("user_id"),
             getAdminClient().from("profiles").select("id", { count: "exact", head: true }).lt("updated_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
+            getAdminClient().from("admin_users").select("user_id", { count: "exact", head: true }),
         ]);
 
     if (allErr) throw new Error(allErr.message);
     if (paidErr) throw new Error(paidErr.message);
     if (calcErr) throw new Error(calcErr.message);
     if (inactiveErr) throw new Error(inactiveErr.message);
+    if (adminsErr) throw new Error(adminsErr.message);
 
     const paidSet = new Set((paidRows ?? []).map((row) => row.user_id).filter(Boolean));
     const calcSet = new Set((calcRows ?? []).map((row) => row.user_id).filter(Boolean));
@@ -28,6 +30,7 @@ async function getSegmentCounts() {
         no_paid: Math.max((allCount ?? 0) - paidSet.size, 0),
         calculations: calcSet.size,
         inactive_30d: inactiveCount ?? 0,
+        admins_test: adminsCount ?? 0,
     } satisfies Record<SegmentKey, number>;
 }
 
