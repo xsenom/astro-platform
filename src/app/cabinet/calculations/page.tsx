@@ -710,7 +710,7 @@ export default function CalculationsPage() {
                     background: "rgba(17,34,80,.16)",
                 }}
             >
-                <div style={{ fontSize: 24, fontWeight: 950 }}>Расчёты</div>
+                <div style={{ fontSize: 24, fontWeight: 950 }}>Прогнозы</div>
 
                 <div
                     style={{
