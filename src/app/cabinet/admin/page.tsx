@@ -11,6 +11,13 @@ type ProfileRow = {
     updated_at: string | null;
 };
 
+type UsersPagination = {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+};
+
 type OrderRow = {
     id: string;
     user_id: string;
@@ -238,6 +245,18 @@ function buildEmailHtml(builder: BuilderState) {
 </html>`;
 }
 
+function paginationButtonStyle(disabled: boolean): CSSProperties {
+    return {
+        borderRadius: 12,
+        padding: "8px 12px",
+        border: "1px solid rgba(224,197,143,.16)",
+        background: disabled ? "rgba(255,255,255,.04)" : "rgba(120,230,255,.10)",
+        color: disabled ? "rgba(245,240,233,.40)" : "rgba(245,240,233,.92)",
+        fontWeight: 900,
+        cursor: disabled ? "not-allowed" : "pointer",
+    };
+}
+
 function buildEmailText(builder: BuilderState) {
     return [
         builder.title,
@@ -263,6 +282,13 @@ export default function AdminPage() {
     const [q, setQ] = useState("");
 
     const [profiles, setProfiles] = useState<ProfileRow[]>([]);
+    const [usersLoading, setUsersLoading] = useState(false);
+    const [usersPagination, setUsersPagination] = useState<UsersPagination>({
+        page: 1,
+        pageSize: 50,
+        total: 0,
+        totalPages: 1,
+    });
     const [orders, setOrders] = useState<OrderRow[]>([]);
     const [calcs, setCalcs] = useState<CalculationRow[]>([]);
     const [adminId, setAdminId] = useState<string | null>(null);
@@ -302,17 +328,7 @@ export default function AdminPage() {
 
     const previewHtml = useMemo(() => buildEmailHtml(builderState), [builderState]);
     const previewText = useMemo(() => buildEmailText(builderState), [builderState]);
-
-    const filteredProfiles = useMemo(() => {
-        const s = q.trim().toLowerCase();
-        if (!s) return profiles;
-        return profiles.filter(
-            (p) =>
-                (p.email || "").toLowerCase().includes(s) ||
-                (p.full_name || "").toLowerCase().includes(s) ||
-                p.id.toLowerCase().includes(s)
-        );
-    }, [profiles, q]);
+    const userSearch = useMemo(() => q.trim(), [q]);
 
     const filteredOrders = useMemo(() => {
         const s = q.trim().toLowerCase();
@@ -404,6 +420,51 @@ export default function AdminPage() {
         if (!mailSubject.trim()) setMailSubject(preset.title);
     }
 
+    async function loadUsers(page = 1, search = userSearch) {
+        setUsersLoading(true);
+        setErr(null);
+
+        try {
+            const token = await getAccessToken();
+            if (!token) {
+                window.location.href = "/login";
+                return;
+            }
+
+            const params = new URLSearchParams({
+                page: String(page),
+                pageSize: String(usersPagination.pageSize),
+            });
+
+            if (search) params.set("q", search);
+
+            const res = await fetch(`/api/admin/users?${params.toString()}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const json = await res.json().catch(() => null);
+
+            if (!res.ok || !json?.ok) {
+                if (res.status === 403) {
+                    window.location.href = "/cabinet";
+                    return;
+                }
+                throw new Error(json?.error || "Не удалось загрузить пользователей.");
+            }
+
+            setProfiles(Array.isArray(json.profiles) ? json.profiles : []);
+            setUsersPagination((prev) => ({
+                page: Number(json.pagination?.page) || page,
+                pageSize: Number(json.pagination?.pageSize) || prev.pageSize,
+                total: Number(json.pagination?.total) || 0,
+                totalPages: Math.max(Number(json.pagination?.totalPages) || 1, 1),
+            }));
+        } catch (e) {
+            setErr(e instanceof Error ? e.message : "Не удалось загрузить пользователей.");
+        } finally {
+            setUsersLoading(false);
+        }
+    }
+
     async function loadSummary() {
         setLoading(true);
         setErr(null);
@@ -440,7 +501,6 @@ export default function AdminPage() {
                 return;
             }
 
-            setProfiles(Array.isArray(json.profiles) ? json.profiles : []);
             setOrders(Array.isArray(json.orders) ? json.orders : []);
             setCalcs(Array.isArray(json.calculations) ? json.calculations : []);
             setEmailCampaigns(Array.isArray(json.email_campaigns) ? json.email_campaigns : []);
@@ -516,6 +576,14 @@ export default function AdminPage() {
     useEffect(() => {
         void loadSummary();
     }, []);
+
+    useEffect(() => {
+        const timeoutId = window.setTimeout(() => {
+            void loadUsers(1, userSearch);
+        }, 300);
+
+        return () => window.clearTimeout(timeoutId);
+    }, [userSearch]);
 
     useEffect(() => {
         if (!mailSubject.trim() && builderState.title.trim()) {
@@ -836,6 +904,8 @@ export default function AdminPage() {
                         onClick={() => {
                             if (tab === "support") {
                                 void loadSupportThreads();
+                            } else if (tab === "users") {
+                                void loadUsers(usersPagination.page, userSearch);
                             } else {
                                 void loadSummary();
                             }
@@ -884,7 +954,7 @@ export default function AdminPage() {
             )}
 
             {tab === "users" && (
-                <Card title={`Пользователи (${filteredProfiles.length})`}>
+                <Card title={`Пользователи (${usersPagination.total})`}>
                     <div
                         style={{
                             display: "grid",
@@ -904,7 +974,7 @@ export default function AdminPage() {
                         <div>Обновлён</div>
                     </div>
 
-                    {filteredProfiles.slice(0, 200).map((p) => (
+                    {profiles.map((p) => (
                         <GridRow key={p.id} cols="180px 1fr 220px">
                             <Mono>{p.id.slice(0, 8)}…</Mono>
                             <div>
@@ -916,6 +986,60 @@ export default function AdminPage() {
                             </div>
                         </GridRow>
                     ))}
+
+                    {!usersLoading && !profiles.length && (
+                        <div style={{ color: "rgba(245,240,233,.65)", fontSize: 13, padding: 10 }}>
+                            Пользователи по этому фильтру не найдены.
+                        </div>
+                    )}
+
+                    <div
+                        style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            marginTop: 14,
+                            flexWrap: "wrap",
+                        }}
+                    >
+                        <div style={{ color: "rgba(245,240,233,.65)", fontSize: 13 }}>
+                            {usersLoading
+                                ? "Загружаем пользователей…"
+                                : `Страница ${usersPagination.page} из ${usersPagination.totalPages} · всего ${usersPagination.total}`}
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <button
+                                onClick={() => void loadUsers(1, userSearch)}
+                                disabled={usersLoading || usersPagination.page <= 1}
+                                style={paginationButtonStyle(usersLoading || usersPagination.page <= 1)}
+                            >
+                                « Первая
+                            </button>
+                            <button
+                                onClick={() => void loadUsers(usersPagination.page - 1, userSearch)}
+                                disabled={usersLoading || usersPagination.page <= 1}
+                                style={paginationButtonStyle(usersLoading || usersPagination.page <= 1)}
+                            >
+                                ‹ Назад
+                            </button>
+                            <button
+                                onClick={() => void loadUsers(usersPagination.page + 1, userSearch)}
+                                disabled={usersLoading || usersPagination.page >= usersPagination.totalPages}
+                                style={paginationButtonStyle(usersLoading || usersPagination.page >= usersPagination.totalPages)}
+                            >
+                                Вперёд ›
+                            </button>
+                            <button
+                                onClick={() => void loadUsers(usersPagination.totalPages, userSearch)}
+                                disabled={usersLoading || usersPagination.page >= usersPagination.totalPages}
+                                style={paginationButtonStyle(usersLoading || usersPagination.page >= usersPagination.totalPages)}
+                            >
+                                Последняя »
+                            </button>
+                        </div>
+                    </div>
                 </Card>
             )}
 
