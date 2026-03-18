@@ -4,7 +4,7 @@ import { sendSmtpMail } from "@/lib/email/smtp";
 
 export const runtime = "nodejs";
 
-type SegmentKey = "all" | "paid" | "no_paid" | "calculations" | "inactive_30d" | "admins_test";
+type SegmentKey = "admins_test" | "paid" | "no_paid" | "calculations" | "inactive_30d" | "all";
 
 type CampaignRecipient = {
     id: string;
@@ -18,11 +18,11 @@ function sanitizeRecipient(recipient: CampaignRecipient): CampaignRecipient {
 }
 
 const LIVE_SEGMENTS: Array<{ key: Exclude<SegmentKey, "admins_test">; label: string }> = [
-    { key: "all", label: "Вся база" },
     { key: "paid", label: "С оплатой" },
     { key: "no_paid", label: "Без оплат" },
     { key: "calculations", label: "С расчётами" },
     { key: "inactive_30d", label: "Неактивные 30 дней" },
+    { key: "all", label: "Вся база" },
 ];
 
 function getEnv(name: string): string | null {
@@ -126,14 +126,16 @@ export async function POST(req: NextRequest) {
     const html = String(body.html || "").trim();
     const text = String(body.text || "").trim();
 
-    if (!isTest && !LIVE_SEGMENTS.some((segment) => segment.key === segmentKey)) {
+    const sendingToAdmins = isTest || segmentKey === "admins_test";
+
+    if (!sendingToAdmins && !LIVE_SEGMENTS.some((segment) => segment.key === segmentKey)) {
         return NextResponse.json({ ok: false, error: "Unknown segment" }, { status: 400 });
     }
 
     if (!subject) return NextResponse.json({ ok: false, error: "Укажите тему письма." }, { status: 400 });
     if (!html && !text) return NextResponse.json({ ok: false, error: "Добавьте HTML или текст письма." }, { status: 400 });
 
-    const recipients = isTest ? await getAdminRecipients() : await getRecipients(segmentKey as Exclude<SegmentKey, "admins_test">);
+    const recipients = sendingToAdmins ? await getAdminRecipients() : await getRecipients(segmentKey as Exclude<SegmentKey, "admins_test">);
     if (!recipients.length) {
         return NextResponse.json({ ok: false, error: "В выбранном сегменте нет получателей." }, { status: 400 });
     }
@@ -141,6 +143,9 @@ export async function POST(req: NextRequest) {
     const from = getEnv("SMTP_FROM");
     const replyTo = getEnv("SMTP_REPLY_TO") || from;
     if (!from) return NextResponse.json({ ok: false, error: "Не задан SMTP_FROM." }, { status: 500 });
+
+    let campaignId: string | null = null;
+    let auditWarning: string | null = null;
 
     const campaignInsert = await getAdminClient()
         .from("email_campaigns")
@@ -157,10 +162,14 @@ export async function POST(req: NextRequest) {
         .single();
 
     if (campaignInsert.error) {
-        return NextResponse.json({ ok: false, error: campaignInsert.error.message }, { status: 500 });
+        const message = campaignInsert.error.message || "Не удалось сохранить кампанию.";
+        if (!message.toLowerCase().includes("stack depth limit exceeded")) {
+            return NextResponse.json({ ok: false, error: message }, { status: 500 });
+        }
+        auditWarning = "Логи рассылки не сохранились: вероятна рекурсия в БД (stack depth limit exceeded) для email_campaigns.";
+    } else {
+        campaignId = campaignInsert.data.id as string;
     }
-
-    const campaignId = campaignInsert.data.id as string;
     const smtp = getSmtpConfig();
 
     let sent = 0;
@@ -192,16 +201,24 @@ export async function POST(req: NextRequest) {
         }
     }
 
-    if (recipientLogs.length) {
-        await getAdminClient().from("email_campaign_recipients").insert(recipientLogs);
+    if (campaignId && recipientLogs.length) {
+        const recipientsInsert = await getAdminClient().from("email_campaign_recipients").insert(recipientLogs);
+        if (recipientsInsert.error && recipientsInsert.error.message.toLowerCase().includes("stack depth limit exceeded")) {
+            auditWarning = auditWarning || "Логи получателей не сохранились: вероятна рекурсия в БД (stack depth limit exceeded).";
+        }
     }
 
     const status = failed > 0 ? (sent > 0 ? (isTest ? "partial_test" : "partial") : (isTest ? "failed_test" : "failed")) : (isTest ? "sent_test" : "sent");
 
-    await getAdminClient()
-        .from("email_campaigns")
-        .update({ status, sent_count: sent, failed_count: failed, sent_at: new Date().toISOString() })
-        .eq("id", campaignId);
+    if (campaignId) {
+        const campaignUpdate = await getAdminClient()
+            .from("email_campaigns")
+            .update({ status, sent_count: sent, failed_count: failed, sent_at: new Date().toISOString() })
+            .eq("id", campaignId);
+        if (campaignUpdate.error && campaignUpdate.error.message.toLowerCase().includes("stack depth limit exceeded")) {
+            auditWarning = auditWarning || "Статус кампании не обновился: вероятна рекурсия в БД (stack depth limit exceeded).";
+        }
+    }
 
     return NextResponse.json({
         ok: true,
@@ -212,5 +229,6 @@ export async function POST(req: NextRequest) {
         recipients_count: recipients.length,
         reply_to: replyTo,
         test_mode: isTest,
+        warning: auditWarning,
     });
 }
