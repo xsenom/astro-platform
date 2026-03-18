@@ -8,7 +8,20 @@ type ProfileRow = {
     id: string;
     email: string | null;
     full_name: string | null;
+    birth_date?: string | null;
+    birth_time?: string | null;
+    birth_city?: string | null;
+    created_at?: string | null;
     updated_at: string | null;
+};
+
+type UserEditorState = {
+    id: string;
+    email: string;
+    full_name: string;
+    birth_date: string;
+    birth_time: string;
+    birth_city: string;
 };
 
 type UsersPagination = {
@@ -257,6 +270,28 @@ function paginationButtonStyle(disabled: boolean): CSSProperties {
     };
 }
 
+function actionButtonStyle(disabled: boolean, background: string, border: string): CSSProperties {
+    return {
+        borderRadius: 14,
+        padding: "10px 14px",
+        border,
+        background: disabled ? "rgba(255,255,255,.04)" : background,
+        color: disabled ? "rgba(245,240,233,.40)" : "rgba(245,240,233,.92)",
+        fontWeight: 950,
+        cursor: disabled ? "not-allowed" : "pointer",
+    };
+}
+
+const editorInputStyle: CSSProperties = {
+    width: "100%",
+    padding: "10px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(224,197,143,.14)",
+    background: "rgba(10,18,38,.28)",
+    color: "rgba(245,240,233,.92)",
+    outline: "none",
+};
+
 function buildEmailText(builder: BuilderState) {
     return [
         builder.title,
@@ -283,6 +318,12 @@ export default function AdminPage() {
 
     const [profiles, setProfiles] = useState<ProfileRow[]>([]);
     const [usersLoading, setUsersLoading] = useState(false);
+    const [editorOpen, setEditorOpen] = useState(false);
+    const [editorSaving, setEditorSaving] = useState(false);
+    const [editorResetting, setEditorResetting] = useState(false);
+    const [editorMessage, setEditorMessage] = useState<string | null>(null);
+    const [editorError, setEditorError] = useState<string | null>(null);
+    const [editorState, setEditorState] = useState<UserEditorState | null>(null);
     const [usersPagination, setUsersPagination] = useState<UsersPagination>({
         page: 1,
         pageSize: 50,
@@ -462,6 +503,121 @@ export default function AdminPage() {
             setErr(e instanceof Error ? e.message : "Не удалось загрузить пользователей.");
         } finally {
             setUsersLoading(false);
+        }
+    }
+
+    function openUserEditor(profile: ProfileRow) {
+        setEditorError(null);
+        setEditorMessage(null);
+        setEditorState({
+            id: profile.id,
+            email: profile.email || "",
+            full_name: profile.full_name || "",
+            birth_date: profile.birth_date || "",
+            birth_time: profile.birth_time || "",
+            birth_city: profile.birth_city || "",
+        });
+        setEditorOpen(true);
+    }
+
+    function closeUserEditor() {
+        if (editorSaving || editorResetting) return;
+        setEditorOpen(false);
+        setEditorError(null);
+        setEditorMessage(null);
+        setEditorState(null);
+    }
+
+    async function saveUserEditor() {
+        if (!editorState) return;
+
+        setEditorSaving(true);
+        setEditorError(null);
+        setEditorMessage(null);
+
+        try {
+            const token = await getAccessToken();
+            if (!token) {
+                window.location.href = "/login";
+                return;
+            }
+
+            const res = await fetch("/api/admin/users", {
+                method: "PATCH",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    userId: editorState.id,
+                    email: editorState.email,
+                    full_name: editorState.full_name,
+                    birth_date: editorState.birth_date,
+                    birth_time: editorState.birth_time,
+                    birth_city: editorState.birth_city,
+                }),
+            });
+
+            const json = await res.json().catch(() => null);
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || "Не удалось сохранить пользователя.");
+            }
+
+            const profile = json.profile as ProfileRow;
+            setProfiles((prev) => prev.map((item) => (item.id === profile.id ? profile : item)));
+            setEditorState({
+                id: profile.id,
+                email: profile.email || "",
+                full_name: profile.full_name || "",
+                birth_date: profile.birth_date || "",
+                birth_time: profile.birth_time || "",
+                birth_city: profile.birth_city || "",
+            });
+            setEditorMessage("Изменения сохранены.");
+        } catch (e) {
+            setEditorError(e instanceof Error ? e.message : "Не удалось сохранить пользователя.");
+        } finally {
+            setEditorSaving(false);
+        }
+    }
+
+    async function sendPasswordReset() {
+        if (!editorState) return;
+
+        setEditorResetting(true);
+        setEditorError(null);
+        setEditorMessage(null);
+
+        try {
+            const token = await getAccessToken();
+            if (!token) {
+                window.location.href = "/login";
+                return;
+            }
+
+            const res = await fetch("/api/admin/users", {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    action: "send_password_reset",
+                    userId: editorState.id,
+                    email: editorState.email,
+                }),
+            });
+
+            const json = await res.json().catch(() => null);
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || "Не удалось отправить письмо для сброса пароля.");
+            }
+
+            setEditorMessage(json.message || "Письмо для сброса пароля отправлено.");
+        } catch (e) {
+            setEditorError(e instanceof Error ? e.message : "Не удалось отправить письмо для сброса пароля.");
+        } finally {
+            setEditorResetting(false);
         }
     }
 
@@ -958,7 +1114,7 @@ export default function AdminPage() {
                     <div
                         style={{
                             display: "grid",
-                            gridTemplateColumns: "180px 1fr 220px",
+                            gridTemplateColumns: "180px 1fr 220px 160px",
                             gap: 10,
                             padding: "10px 10px",
                             borderRadius: 14,
@@ -972,10 +1128,11 @@ export default function AdminPage() {
                         <div>User ID</div>
                         <div>Email / Имя</div>
                         <div>Обновлён</div>
+                        <div>Действия</div>
                     </div>
 
                     {profiles.map((p) => (
-                        <GridRow key={p.id} cols="180px 1fr 220px">
+                        <GridRow key={p.id} cols="180px 1fr 220px 160px">
                             <Mono>{p.id.slice(0, 8)}…</Mono>
                             <div>
                                 <div style={{ fontWeight: 900 }}>{p.email || "—"}</div>
@@ -983,6 +1140,22 @@ export default function AdminPage() {
                             </div>
                             <div style={{ opacity: 0.75, fontSize: 12 }}>
                                 {p.updated_at ? new Date(p.updated_at).toLocaleString() : "—"}
+                            </div>
+                            <div>
+                                <button
+                                    onClick={() => openUserEditor(p)}
+                                    style={{
+                                        borderRadius: 12,
+                                        padding: "8px 10px",
+                                        border: "1px solid rgba(224,197,143,.18)",
+                                        background: "rgba(224,197,143,.10)",
+                                        color: "rgba(245,240,233,.92)",
+                                        fontWeight: 900,
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    Редактировать
+                                </button>
                             </div>
                         </GridRow>
                     ))}
@@ -1041,6 +1214,125 @@ export default function AdminPage() {
                         </div>
                     </div>
                 </Card>
+            )}
+
+            {editorOpen && editorState && (
+                <div
+                    onClick={closeUserEditor}
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(6,10,20,.72)",
+                        display: "grid",
+                        placeItems: "center",
+                        padding: 20,
+                        zIndex: 60,
+                    }}
+                >
+                    <div
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: "min(680px, 100%)",
+                            borderRadius: 24,
+                            border: "1px solid rgba(224,197,143,.14)",
+                            background: "linear-gradient(180deg, rgba(17,26,53,.98), rgba(10,16,34,.98))",
+                            padding: 20,
+                            boxShadow: "0 24px 80px rgba(0,0,0,.45)",
+                            display: "grid",
+                            gap: 14,
+                        }}
+                    >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                            <div>
+                                <div style={{ fontSize: 24, fontWeight: 900 }}>Редактор пользователя</div>
+                                <div style={{ opacity: 0.7, fontSize: 12, marginTop: 4 }}>{editorState.id}</div>
+                            </div>
+                            <button
+                                onClick={closeUserEditor}
+                                disabled={editorSaving || editorResetting}
+                                style={paginationButtonStyle(editorSaving || editorResetting)}
+                            >
+                                Закрыть
+                            </button>
+                        </div>
+
+                        {editorError && (
+                            <div style={{ padding: 12, borderRadius: 16, background: "rgba(255,110,90,.08)", border: "1px solid rgba(255,110,90,.22)" }}>
+                                {editorError}
+                            </div>
+                        )}
+
+                        {editorMessage && (
+                            <div style={{ padding: 12, borderRadius: 16, background: "rgba(120,230,255,.08)", border: "1px solid rgba(120,230,255,.22)" }}>
+                                {editorMessage}
+                            </div>
+                        )}
+
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                            <label style={{ display: "grid", gap: 6 }}>
+                                <span style={{ fontSize: 12, opacity: 0.75 }}>Email</span>
+                                <input
+                                    value={editorState.email}
+                                    onChange={(e) => setEditorState((prev) => (prev ? { ...prev, email: e.target.value } : prev))}
+                                    style={editorInputStyle}
+                                />
+                            </label>
+                            <label style={{ display: "grid", gap: 6 }}>
+                                <span style={{ fontSize: 12, opacity: 0.75 }}>Имя</span>
+                                <input
+                                    value={editorState.full_name}
+                                    onChange={(e) => setEditorState((prev) => (prev ? { ...prev, full_name: e.target.value } : prev))}
+                                    style={editorInputStyle}
+                                />
+                            </label>
+                            <label style={{ display: "grid", gap: 6 }}>
+                                <span style={{ fontSize: 12, opacity: 0.75 }}>Дата рождения</span>
+                                <input
+                                    value={editorState.birth_date}
+                                    onChange={(e) => setEditorState((prev) => (prev ? { ...prev, birth_date: e.target.value } : prev))}
+                                    placeholder="YYYY-MM-DD"
+                                    style={editorInputStyle}
+                                />
+                            </label>
+                            <label style={{ display: "grid", gap: 6 }}>
+                                <span style={{ fontSize: 12, opacity: 0.75 }}>Время рождения</span>
+                                <input
+                                    value={editorState.birth_time}
+                                    onChange={(e) => setEditorState((prev) => (prev ? { ...prev, birth_time: e.target.value } : prev))}
+                                    placeholder="HH:MM"
+                                    style={editorInputStyle}
+                                />
+                            </label>
+                        </div>
+
+                        <label style={{ display: "grid", gap: 6 }}>
+                            <span style={{ fontSize: 12, opacity: 0.75 }}>Город рождения</span>
+                            <input
+                                value={editorState.birth_city}
+                                onChange={(e) => setEditorState((prev) => (prev ? { ...prev, birth_city: e.target.value } : prev))}
+                                style={editorInputStyle}
+                            />
+                        </label>
+
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between" }}>
+                            <button
+                                onClick={() => void sendPasswordReset()}
+                                disabled={editorSaving || editorResetting}
+                                style={actionButtonStyle(editorSaving || editorResetting, "rgba(120,230,255,.10)", "1px solid rgba(120,230,255,.22)")}
+                            >
+                                {editorResetting ? "Отправляем..." : "Сбросить пароль"}
+                            </button>
+
+                            <button
+                                onClick={() => void saveUserEditor()}
+                                disabled={editorSaving || editorResetting}
+                                style={actionButtonStyle(editorSaving || editorResetting, "rgba(224,197,143,.10)", "1px solid rgba(224,197,143,.22)")}
+                            >
+                                {editorSaving ? "Сохраняем..." : "Сохранить изменения"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
 
             {tab === "orders" && (
