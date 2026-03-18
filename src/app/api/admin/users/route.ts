@@ -16,6 +16,10 @@ function escapeLike(value: string) {
     return value.replace(/[,%]/g, (char) => `\\${char}`);
 }
 
+function isUuid(value: string) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 export async function GET(req: NextRequest) {
     const admin = await getAdminAuth(req);
     if (!admin) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
@@ -39,7 +43,13 @@ export async function GET(req: NextRequest) {
 
         if (q) {
             const safeQuery = escapeLike(q);
-            query = query.or(`id.ilike.%${safeQuery}%,email.ilike.%${safeQuery}%,full_name.ilike.%${safeQuery}%`);
+            const filters = [`email.ilike.%${safeQuery}%`, `full_name.ilike.%${safeQuery}%`];
+
+            if (isUuid(q)) {
+                filters.push(`id.eq.${q}`);
+            }
+
+            query = query.or(filters.join(","));
         }
 
         const { data, count, error } = await query.range(from, to);
