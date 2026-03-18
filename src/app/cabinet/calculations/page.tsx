@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 
-type CalcKind = "natal" | "day" | "week" | "month";
+type CalcKind = "natal" | "day" | "week" | "month" | "big_calendar";
 
 type ApiResult =
     | { kind: "natal"; text: string; meta?: any }
     | { kind: "day"; text: string; raw?: any }
     | { kind: "week"; text: string; raw?: any }
-    | { kind: "month"; text: string; raw?: any };
+    | { kind: "month"; text: string; raw?: any }
+    | { kind: "big_calendar"; text: string; raw?: any };
 
 type BirthProfile = {
     birth_date: string | null;
@@ -24,7 +25,6 @@ type ProductRow = {
     price_rub: number;
     is_free: boolean;
     is_active: boolean;
-    payment_url: string | null;
     sort_order: number;
 };
 
@@ -40,6 +40,9 @@ type SavedCalculationRow = {
     result_json: any;
     input_params: any;
     updated_at: string;
+    pdf_url?: string | null;
+    pdf_path?: string | null;
+    file_name?: string | null;
 };
 
 function pad2(n: number) {
@@ -61,6 +64,7 @@ function parseBirthTime(value: string | null) {
     if (!value) return null;
     const [h, min] = value.split(":").map((x) => Number.parseInt(x, 10));
     if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+
     return {
         hour: String(h).padStart(2, "0"),
         minute: String(min).padStart(2, "0"),
@@ -88,6 +92,11 @@ const loadingLabels: Record<CalcKind, string[]> = {
         "Анализируем благоприятные периоды",
         "Собираем итоговый результат",
     ],
+    big_calendar: [
+        "Собираем персональный календарь",
+        "Формируем интерпретацию",
+        "Готовим PDF-файл",
+    ],
 };
 
 export default function CalculationsPage() {
@@ -106,6 +115,7 @@ export default function CalculationsPage() {
         day: false,
         week: false,
         month: false,
+        big_calendar: false,
     });
 
     const [savedMap, setSavedMap] = useState<
@@ -164,6 +174,7 @@ export default function CalculationsPage() {
     async function bootstrap() {
         setProfileLoading(true);
         setProfileError(null);
+        setErr(null);
 
         try {
             const { data: userData, error: userErr } = await supabase.auth.getUser();
@@ -176,32 +187,35 @@ export default function CalculationsPage() {
             const uid = userData.user.id;
             setUserId(uid);
 
-            const [
-                profileResp,
-                productsResp,
-                accessResp,
-                savedResp,
-            ] = await Promise.all([
+            const [profileResp, productsResp, accessResp, savedResp] = await Promise.all([
                 supabase
                     .from("profiles")
                     .select("birth_date, birth_time, birth_city")
                     .eq("id", uid)
                     .maybeSingle(),
+
                 supabase
                     .from("calculation_products")
-                    .select("code, title, description, price_rub, is_free, is_active, payment_url, sort_order")
+                    .select("code, title, description, price_rub, is_free, is_active, sort_order")
                     .eq("is_active", true)
                     .order("sort_order", { ascending: true }),
+
                 supabase
                     .from("user_calculation_access")
                     .select("product_code")
                     .eq("user_id", uid),
+
                 supabase
                     .from("saved_calculations")
-                    .select("id, kind, target_date, result_text, result_json, input_params, updated_at")
+                    .select("id, kind, target_date, result_text, result_json, input_params, updated_at, pdf_url, pdf_path, file_name")
                     .eq("user_id", uid)
                     .order("updated_at", { ascending: false }),
             ]);
+
+            console.log("profileResp", profileResp);
+            console.log("productsResp", productsResp);
+            console.log("accessResp", accessResp);
+            console.log("savedResp", savedResp);
 
             if (profileResp.error) {
                 setProfileError(profileResp.error.message);
@@ -209,7 +223,10 @@ export default function CalculationsPage() {
                 setProfile((profileResp.data ?? null) as BirthProfile | null);
             }
 
-            if (!productsResp.error) {
+            if (productsResp.error) {
+                setErr(`Не удалось загрузить список расчётов: ${productsResp.error.message}`);
+                setProducts([]);
+            } else {
                 setProducts((productsResp.data ?? []) as ProductRow[]);
             }
 
@@ -218,6 +235,7 @@ export default function CalculationsPage() {
                 day: false,
                 week: false,
                 month: false,
+                big_calendar: false,
             };
 
             const productRows = (productsResp.data ?? []) as ProductRow[];
@@ -227,36 +245,37 @@ export default function CalculationsPage() {
                 }
             }
 
-            const accessRows = (accessResp.data ?? []) as AccessRow[];
-            for (const row of accessRows) {
-                nextAccess[row.product_code] = true;
+            if (!accessResp.error) {
+                const accessRows = (accessResp.data ?? []) as AccessRow[];
+                for (const row of accessRows) {
+                    nextAccess[row.product_code] = true;
+                }
             }
 
             setAccessMap(nextAccess);
 
-            const rows = (savedResp.data ?? []) as SavedCalculationRow[];
-            const nextSaved: Partial<Record<CalcKind, SavedCalculationRow>> = {};
+            if (!savedResp.error) {
+                const rows = (savedResp.data ?? []) as SavedCalculationRow[];
+                const nextSaved: Partial<Record<CalcKind, SavedCalculationRow>> = {};
 
-            for (const row of rows) {
-                if (row.kind === "day") {
-                    if (row.target_date === targetDate && !nextSaved.day) {
-                        nextSaved.day = row;
+                for (const row of rows) {
+                    if (row.kind === "day") {
+                        if (row.target_date === targetDate && !nextSaved.day) {
+                            nextSaved.day = row;
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                if (!nextSaved[row.kind]) {
-                    nextSaved[row.kind] = row;
-                }
-            }
 
-            setSavedMap(nextSaved);
+                    if (!nextSaved[row.kind]) {
+                        nextSaved[row.kind] = row;
+                    }
+                }
+
+                setSavedMap(nextSaved);
+            }
         } finally {
             setProfileLoading(false);
         }
-    }
-
-    function getProduct(kind: CalcKind) {
-        return products.find((p) => p.code === kind) || null;
     }
 
     function isPurchased(kind: CalcKind) {
@@ -293,38 +312,183 @@ export default function CalculationsPage() {
     }) {
         if (!userId) return;
 
-        const payload = {
-            user_id: userId,
-            kind: params.kind,
-            target_date: params.targetDate ?? null,
-            result_text: params.resultText,
-            result_json: params.resultJson ?? null,
-            input_params: params.inputParams ?? null,
-        };
+        try {
+            if (params.kind === "day") {
+                const { data: existing, error: selectError } = await supabase
+                    .from("saved_calculations")
+                    .select("id")
+                    .eq("user_id", userId)
+                    .eq("kind", "day")
+                    .eq("target_date", params.targetDate ?? null)
+                    .maybeSingle();
 
-        if (params.kind === "natal" || params.kind === "week" || params.kind === "month") {
-            const { error } = await supabase
-                .from("saved_calculations")
-                .upsert(payload, { onConflict: "user_id,kind" });
+                if (selectError) {
+                    console.error("saveCalculation day selectError:", selectError);
+                    setErr(`Ошибка сохранения расчёта: ${selectError.message}`);
+                    return;
+                }
 
-            if (error) {
-                console.error("saveCalculation error:", error);
+                if (existing?.id) {
+                    const { error: updateError } = await supabase
+                        .from("saved_calculations")
+                        .update({
+                            result_text: params.resultText,
+                            result_json: params.resultJson ?? null,
+                            input_params: params.inputParams ?? null,
+                            updated_at: new Date().toISOString(),
+                        })
+                        .eq("id", existing.id);
+
+                    if (updateError) {
+                        console.error("saveCalculation day updateError:", updateError);
+                        setErr(`Ошибка сохранения расчёта: ${updateError.message}`);
+                    }
+
+                    return;
+                }
+
+                const { error: insertError } = await supabase
+                    .from("saved_calculations")
+                    .insert({
+                        user_id: userId,
+                        kind: "day",
+                        target_date: params.targetDate ?? null,
+                        result_text: params.resultText,
+                        result_json: params.resultJson ?? null,
+                        input_params: params.inputParams ?? null,
+                    });
+
+                if (insertError) {
+                    console.error("saveCalculation day insertError:", insertError);
+                    setErr(`Ошибка сохранения расчёта: ${insertError.message}`);
+                }
+
+                return;
             }
 
-            return;
-        }
-
-        if (params.kind === "day") {
-            const { error } = await supabase
+            const { data: existing, error: selectError } = await supabase
                 .from("saved_calculations")
-                .upsert(payload, { onConflict: "user_id,kind,target_date" });
+                .select("id")
+                .eq("user_id", userId)
+                .eq("kind", params.kind)
+                .maybeSingle();
 
-            if (error) {
-                console.error("saveCalculation error:", error);
+            if (selectError) {
+                console.error("saveCalculation selectError:", selectError);
+                setErr(`Ошибка сохранения расчёта: ${selectError.message}`);
+                return;
             }
+
+            if (existing?.id) {
+                const { error: updateError } = await supabase
+                    .from("saved_calculations")
+                    .update({
+                        result_text: params.resultText,
+                        result_json: params.resultJson ?? null,
+                        input_params: params.inputParams ?? null,
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", existing.id);
+
+                if (updateError) {
+                    console.error("saveCalculation updateError:", updateError);
+                    setErr(`Ошибка сохранения расчёта: ${updateError.message}`);
+                }
+
+                return;
+            }
+
+            const { error: insertError } = await supabase
+                .from("saved_calculations")
+                .insert({
+                    user_id: userId,
+                    kind: params.kind,
+                    target_date: null,
+                    result_text: params.resultText,
+                    result_json: params.resultJson ?? null,
+                    input_params: params.inputParams ?? null,
+                });
+
+            if (insertError) {
+                console.error("saveCalculation insertError:", insertError);
+                setErr(`Ошибка сохранения расчёта: ${insertError.message}`);
+            }
+        } catch (e: any) {
+            console.error("saveCalculation unexpected error:", e);
+            setErr(`Ошибка сохранения расчёта: ${e?.message || "Неизвестная ошибка"}`);
         }
     }
 
+    async function runBigCalendar() {
+        if (!requireProfile()) return;
+
+        if (!isPurchased("big_calendar")) {
+            setErr("Расчёт доступен только после оплаты.");
+            return;
+        }
+
+        setLoading(true);
+        setActiveKind("big_calendar");
+        setErr(null);
+        setResult(null);
+        setResultMeta({ source: null, updatedAt: null });
+
+        try {
+            if (showSaved("big_calendar")) return;
+
+            const { data: userData, error } = await supabase.auth.getUser();
+
+            if (error || !userData.user) {
+                window.location.href = "/login";
+                return;
+            }
+
+            const res = await fetch(`${API}/calculations/big-calendar`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-User-Id": userData.user.id,
+                },
+            });
+
+            const json = await res.json().catch(() => null);
+
+            if (!res.ok) {
+                throw new Error(json?.detail || "Не удалось выполнить расчёт");
+            }
+
+            const text = json?.text || "PDF сформирован";
+
+            setResult({
+                kind: "big_calendar",
+                text,
+                raw: json,
+            } as any);
+
+            setResultMeta({ source: "fresh", updatedAt: null });
+
+            setSavedMap((prev) => ({
+                ...prev,
+                big_calendar: {
+                    id: "temp-big-calendar",
+                    kind: "big_calendar",
+                    target_date: null,
+                    result_text: text,
+                    result_json: json,
+                    input_params: null,
+                    updated_at: new Date().toISOString(),
+                    pdf_url: json?.pdf_url ?? null,
+                    pdf_path: json?.pdf_path ?? null,
+                    file_name: json?.file_name ?? null,
+                },
+            }));
+        } catch (e: any) {
+            setErr(e?.message || "Ошибка");
+        } finally {
+            setLoading(false);
+            setActiveKind(null);
+        }
+    }
     function showSaved(kind: CalcKind) {
         const row = savedMap[kind];
         if (!row) return false;
@@ -332,7 +496,12 @@ export default function CalculationsPage() {
         setResult({
             kind,
             text: row.result_text,
-            raw: row.result_json,
+            raw: {
+                ...(row.result_json || {}),
+                pdf_url: row.pdf_url ?? null,
+                pdf_path: row.pdf_path ?? null,
+                file_name: row.file_name ?? null,
+            },
         } as ApiResult);
 
         setResultMeta({
@@ -380,13 +549,12 @@ export default function CalculationsPage() {
             const json = await callJson(`${API}/natal?${qs.toString()}`);
             const text = json?.natal_chart || "Пустой ответ";
 
-            const nextResult: ApiResult = {
+            setResult({
                 kind: "natal",
                 text,
                 meta: json,
-            };
+            });
 
-            setResult(nextResult);
             setResultMeta({ source: "fresh", updatedAt: null });
 
             await saveCalculation({
@@ -456,13 +624,12 @@ export default function CalculationsPage() {
 
             const text = lines.join("\n") || "Пустой ответ";
 
-            const nextResult: ApiResult = {
+            setResult({
                 kind: "day",
                 text,
                 raw: json,
-            };
+            });
 
-            setResult(nextResult);
             setResultMeta({ source: "fresh", updatedAt: null });
 
             await saveCalculation({
@@ -531,13 +698,12 @@ export default function CalculationsPage() {
                 ? arr.map((x: any) => x.summary_text).join("\n\n")
                 : JSON.stringify(json, null, 2);
 
-            const nextResult: ApiResult = {
+            setResult({
                 kind: "week",
                 text: text || "Пустой ответ",
                 raw: json,
-            };
+            });
 
-            setResult(nextResult);
             setResultMeta({ source: "fresh", updatedAt: null });
 
             await saveCalculation({
@@ -608,13 +774,12 @@ export default function CalculationsPage() {
                         .join("\n")
                     : "Нет точных благоприятных аспектов в ближайшие 30 дней.";
 
-            const nextResult: ApiResult = {
+            setResult({
                 kind: "month",
                 text,
                 raw: json,
-            };
+            });
 
-            setResult(nextResult);
             setResultMeta({ source: "fresh", updatedAt: null });
 
             await saveCalculation({
@@ -648,30 +813,43 @@ export default function CalculationsPage() {
         }
     }
 
-    async function openPayment(kind: "day" | "week" | "month") {
-        const { data: userData, error } = await supabase.auth.getUser();
+    async function openPayment(kind: "day" | "week" | "month" | "big_calendar") {
+        try {
+            setErr(null);
 
-        if (error || !userData.user) {
-            window.location.href = "/login";
-            return;
+            const { data: userData, error } = await supabase.auth.getUser();
+
+            if (error || !userData.user) {
+                window.location.href = "/login";
+                return;
+            }
+
+            const res = await fetch(`${API}/payments/prodamus/link`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-User-Id": userData.user.id,
+                },
+                body: JSON.stringify({
+                    product_code: kind,
+                    customer_email: userData.user.email ?? null,
+                }),
+            });
+
+            const json = await res.json().catch(() => null);
+
+            if (!res.ok) {
+                throw new Error(json?.detail || "Не удалось создать ссылку оплаты");
+            }
+
+            if (!json?.payment_url) {
+                throw new Error("Сервер не вернул ссылку на оплату");
+            }
+
+            window.open(json.payment_url, "_blank", "noopener,noreferrer");
+        } catch (e: any) {
+            setErr(e?.message || "Ошибка оплаты");
         }
-
-        const res = await fetch("http://127.0.0.1:8011/payments/prodamus/link", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-User-Id": userData.user.id,
-            },
-            body: JSON.stringify({ product_code: kind }),
-        });
-
-        const json = await res.json();
-
-        if (!res.ok) {
-            throw new Error(json?.detail || "Не удалось создать ссылку оплаты");
-        }
-
-        window.open(json.payment_url, "_blank", "noopener,noreferrer");
     }
 
     function handleAction(kind: CalcKind) {
@@ -680,8 +858,17 @@ export default function CalculationsPage() {
             return;
         }
 
+        if (kind === "big_calendar") {
+            if (!isPurchased(kind)) {
+                void openPayment(kind);
+                return;
+            }
+            void runBigCalendar();
+            return;
+        }
+
         if (!isPurchased(kind)) {
-            openPayment(kind);
+            void openPayment(kind);
             return;
         }
 
@@ -697,6 +884,7 @@ export default function CalculationsPage() {
 
         if (kind === "month") {
             void runMonth();
+            return;
         }
     }
 
@@ -712,16 +900,7 @@ export default function CalculationsPage() {
             >
                 <div style={{ fontSize: 24, fontWeight: 950 }}>Прогнозы</div>
 
-                <div
-                    style={{
-                        marginTop: 8,
-                        color: "rgba(245,240,233,.72)",
-                        lineHeight: 1.55,
-                    }}
-                >
-                    Натальная карта доступна бесплатно. Прогнозы на день, неделю и месяц
-                    открываются после оплаты и сохраняются в кабинете.
-                </div>
+
 
                 {profileLoading && (
                     <div style={{ marginTop: 14, color: "rgba(245,240,233,.75)" }}>
@@ -742,9 +921,23 @@ export default function CalculationsPage() {
                     >
                         {profileError
                             ? `Не удалось загрузить профиль: ${profileError}`
-                            : `Чтобы открыть расчёты, сначала заполните в профиле: ${missingFields.join(
-                                ", "
-                            )}.`}
+                            : `Чтобы открыть расчёты, сначала заполните в профиле: ${missingFields.join(", ")}.`}
+                    </div>
+                )}
+
+                {!profileLoading && !err && products.length === 0 && (
+                    <div
+                        style={{
+                            marginTop: 14,
+                            padding: 14,
+                            borderRadius: 14,
+                            border: "1px solid rgba(255,190,90,.20)",
+                            background: "rgba(255,190,90,.06)",
+                            color: "rgba(245,240,233,.86)",
+                        }}
+                    >
+                        Список расчётов пуст. Проверь таблицу <b>calculation_products</b> и поля{" "}
+                        <b>is_active = true</b>.
                     </div>
                 )}
 
@@ -802,7 +995,13 @@ export default function CalculationsPage() {
                                     </div>
                                 </div>
 
-                                <div style={{ color: "rgba(245,240,233,.72)", lineHeight: 1.5, minHeight: 44 }}>
+                                <div
+                                    style={{
+                                        color: "rgba(245,240,233,.72)",
+                                        lineHeight: 1.5,
+                                        minHeight: 44,
+                                    }}
+                                >
                                     {product.description || "Описание скоро будет добавлено"}
                                 </div>
 
@@ -869,16 +1068,7 @@ export default function CalculationsPage() {
                 >
                     <div style={{ fontSize: 16, fontWeight: 950 }}>Результат</div>
 
-                    {resultMeta.source && (
-                        <div style={{ color: "rgba(245,240,233,.68)", fontSize: 13 }}>
-                            {resultMeta.source === "saved"
-                                ? "Показан сохранённый результат"
-                                : "Показан новый расчёт"}
-                            {resultMeta.updatedAt
-                                ? ` · ${new Date(resultMeta.updatedAt).toLocaleString("ru-RU")}`
-                                : ""}
-                        </div>
-                    )}
+
                 </div>
 
                 {!result && !loading && (
@@ -908,23 +1098,47 @@ export default function CalculationsPage() {
                 )}
 
                 {result && !loading && (
-                    <pre
-                        style={{
-                            margin: 0,
-                            whiteSpace: "pre-wrap",
-                            wordBreak: "break-word",
-                            padding: 14,
-                            borderRadius: 16,
-                            border: "1px solid rgba(224,197,143,.10)",
-                            background: "rgba(10,18,38,.18)",
-                            color: "rgba(245,240,233,.92)",
-                            fontSize: 13,
-                            lineHeight: 1.6,
-                        }}
-                    >
+                    <div style={{ display: "grid", gap: 12 }}>
+        <pre
+            style={{
+                margin: 0,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                padding: 14,
+                borderRadius: 16,
+                border: "1px solid rgba(224,197,143,.10)",
+                background: "rgba(10,18,38,.18)",
+                color: "rgba(245,240,233,.92)",
+                fontSize: 13,
+                lineHeight: 1.6,
+            }}
+        >
             {result.text}
-          </pre>
+        </pre>
+
+                        {"raw" in result && result.raw?.pdf_url && (
+                            <a
+                                href={result.raw.pdf_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                    display: "inline-block",
+                                    width: "fit-content",
+                                    borderRadius: 14,
+                                    padding: "11px 13px",
+                                    border: "1px solid rgba(224,197,143,.18)",
+                                    background: "rgba(224,197,143,.10)",
+                                    color: "rgba(245,240,233,.92)",
+                                    fontWeight: 950,
+                                    textDecoration: "none",
+                                }}
+                            >
+                                Скачать PDF
+                            </a>
+                        )}
+                    </div>
                 )}
+
             </div>
         </div>
     );

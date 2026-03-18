@@ -11,7 +11,17 @@ type SupportThreadRow = { id: string; created_at: string; last_message_at: strin
 type SupportMsgRow = { id: string; created_at: string; thread_id: string; author_user_id: string | null; author_admin_id: string | null; is_admin: boolean; message: string; attachment_url: string | null };
 type IdRow = { id: string };
 type SegmentKey = "all" | "paid" | "no_paid" | "calculations" | "inactive_30d" | "admins_test";
-type EmailCampaignRow = { id: string; created_at: string; segment_key: SegmentKey; subject: string; status: string; recipients_count: number; sent_count: number; failed_count: number; created_by: string };
+type EmailCampaignRow = {
+    id: string | number;
+    created_at: string;
+    segment_key: SegmentKey;
+    subject: string;
+    status: string;
+    recipients_count: number;
+    sent_count: number;
+    failed_count: number;
+    created_by: string | null;
+};
 type EmailSegmentCounts = Record<SegmentKey, number>;
 
 const SEGMENT_LABELS: Record<SegmentKey, string> = {
@@ -324,7 +334,7 @@ export default function AdminPage() {
                     <div style={{ gridColumn: "1 / -1" }}>
                         <Card title={`История рассылок (${emailCampaigns.length})`}>
                             <GridHeader cols="180px 1fr 140px 160px 160px">Campaign</GridHeader>
-                            {emailCampaigns.map((campaign) => <GridRow key={campaign.id} cols="180px 1fr 140px 160px 160px"><Mono>{campaign.id.slice(0, 8)}…</Mono><div><div style={{ fontWeight: 900 }}>{campaign.subject}</div><div style={{ opacity: 0.72, fontSize: 12 }}>{SEGMENT_LABELS[campaign.segment_key] || campaign.segment_key}</div></div><Badge>{campaign.status}</Badge><div style={{ fontSize: 12, opacity: 0.82 }}>Всего: {campaign.recipients_count}<br />Успех: {campaign.sent_count}<br />Ошибки: {campaign.failed_count}</div><div style={{ fontSize: 12, opacity: 0.82 }}>{new Date(campaign.created_at).toLocaleString()}</div></GridRow>)}
+                            {emailCampaigns.map((campaign) => <GridRow key={campaign.id} cols="180px 1fr 140px 160px 160px"><Mono>{String(campaign.id).slice(0, 8)}…</Mono><div><div style={{ fontWeight: 900 }}>{campaign.subject}</div><div style={{ opacity: 0.72, fontSize: 12 }}>{SEGMENT_LABELS[campaign.segment_key] || campaign.segment_key}</div></div><Badge>{campaign.status}</Badge><div style={{ fontSize: 12, opacity: 0.82 }}>Всего: {campaign.recipients_count}<br />Успех: {campaign.sent_count}<br />Ошибки: {campaign.failed_count}</div><div style={{ fontSize: 12, opacity: 0.82 }}>{new Date(campaign.created_at).toLocaleString()}</div></GridRow>)}
                             {!emailCampaigns.length && <div style={{ color: "rgba(245,240,233,.65)", fontSize: 13, padding: 10 }}>Рассылок пока не было.</div>}
                         </Card>
                     </div>

@@ -10,7 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import pytz
 import requests
 import swisseph as swe
+import base64
+import uuid
+from typing import Optional, Dict, Any
 
+from fastapi import Header, Body
 from .astro_geo import (
     get_coordinates_smart,
     get_julian_day_utc,
