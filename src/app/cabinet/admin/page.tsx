@@ -274,7 +274,7 @@ export default function AdminPage() {
                 <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                     <TabButton active={tab === "users"} onClick={() => setTab("users")}>Пользователи</TabButton>
                     <TabButton active={tab === "orders"} onClick={() => setTab("orders")}>Покупки</TabButton>
-                    <TabButton active={tab === "calcs"} onClick={() => setTab("calcs")}>Расчёты</TabButton>
+                    <TabButton active={tab === "calcs"} onClick={() => setTab("calcs")}>Прогнозы</TabButton>
                     <TabButton active={tab === "support"} onClick={() => setTab("support")}>Поддержка</TabButton>
                     <TabButton active={tab === "mail"} onClick={() => setTab("mail")}>Почта</TabButton>
                     <div style={{ flex: 1 }} />
@@ -290,7 +290,7 @@ export default function AdminPage() {
 
             {tab === "orders" && <Card title={`Покупки (${filteredOrders.length})`}><GridHeader cols="160px 160px 120px 140px 1fr">Order</GridHeader>{filteredOrders.slice(0, 250).map((o) => <GridRow key={o.id} cols="160px 160px 120px 140px 1fr"><Mono>{o.id.slice(0, 8)}…</Mono><Mono>{o.user_id.slice(0, 8)}…</Mono><Badge>{o.status || "—"}</Badge><div style={{ fontWeight: 900 }}>{o.amount_cents != null ? `${(o.amount_cents / 100).toFixed(2)} ${o.currency || ""}` : "—"}</div><div style={{ opacity: 0.8, fontSize: 12 }}>{o.provider || "—"} {o.provider_order_id ? `· ${o.provider_order_id}` : ""} {o.paid_at ? `· paid ${new Date(o.paid_at).toLocaleString()}` : ""}</div></GridRow>)}</Card>}
 
-            {tab === "calcs" && <Card title={`Расчёты (${filteredCalcs.length})`}><GridHeader cols="170px 170px 160px 140px 160px">Calc</GridHeader>{filteredCalcs.slice(0, 250).map((c) => <GridRow key={c.id} cols="170px 170px 160px 140px 160px"><Mono>{c.id.slice(0, 8)}…</Mono><Mono>{c.user_id.slice(0, 8)}…</Mono><Mono>{String(c.calc_type_id || "—")}</Mono><Badge>{c.status || "—"}</Badge><button onClick={() => void restartCalc(c.id)} style={{ borderRadius: 12, padding: "8px 10px", border: "1px solid rgba(120,230,255,.22)", background: "rgba(120,230,255,.10)", color: "rgba(245,240,233,.92)", fontWeight: 950, cursor: "pointer" }}>Перезапуск</button></GridRow>)}</Card>}
+            {tab === "calcs" && <Card title={`Прогнозы (${filteredCalcs.length})`}><GridHeader cols="170px 170px 160px 140px 160px">Calc</GridHeader>{filteredCalcs.slice(0, 250).map((c) => <GridRow key={c.id} cols="170px 170px 160px 140px 160px"><Mono>{c.id.slice(0, 8)}…</Mono><Mono>{c.user_id.slice(0, 8)}…</Mono><Mono>{String(c.calc_type_id || "—")}</Mono><Badge>{c.status || "—"}</Badge><button onClick={() => void restartCalc(c.id)} style={{ borderRadius: 12, padding: "8px 10px", border: "1px solid rgba(120,230,255,.22)", background: "rgba(120,230,255,.10)", color: "rgba(245,240,233,.92)", fontWeight: 950, cursor: "pointer" }}>Перезапуск</button></GridRow>)}</Card>}
 
             {tab === "mail" && (
                 <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 380px) 1fr", gap: 14 }}>

@@ -7,10 +7,9 @@ import MoonRouteTransition from "@/components/MoonRouteTransition";
 import { CabinetLoadingProvider, useCabinetLoading } from "@/components/cabinet/cabinetLoading";
 
 const BASE_NAV = [
-    { href: "/cabinet", label: "Дашборд" },
-    { href: "/cabinet/calculations", label: "Расчёты" },
+    { href: "/cabinet/profile", label: "Ваши данные" },
+    { href: "/cabinet/calculations", label: "Прогнозы" },
     { href: "/cabinet/purchases", label: "Покупки" },
-    { href: "/cabinet/profile", label: "Профиль" },
     { href: "/cabinet/support", label: "Поддержка" },
 ] as const;
 
