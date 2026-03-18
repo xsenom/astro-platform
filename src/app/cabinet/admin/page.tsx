@@ -10,7 +10,7 @@ type CalculationRow = { id: string; user_id: string; calc_type_id?: string | nul
 type SupportThreadRow = { id: string; created_at: string; last_message_at: string; updated_at: string | null; user_id: string; category: string; subject: string; status: string };
 type SupportMsgRow = { id: string; created_at: string; thread_id: string; author_user_id: string | null; author_admin_id: string | null; is_admin: boolean; message: string; attachment_url: string | null };
 type IdRow = { id: string };
-type SegmentKey = "all" | "paid" | "no_paid" | "calculations" | "inactive_30d" | "admins_test";
+type SegmentKey = "admins_test" | "paid" | "no_paid" | "calculations" | "inactive_30d" | "all";
 type EmailCampaignRow = {
     id: string | number;
     created_at: string;
@@ -23,17 +23,59 @@ type EmailCampaignRow = {
     created_by: string | null;
 };
 type EmailSegmentCounts = Record<SegmentKey, number>;
+type BuilderState = {
+    preheader: string;
+    title: string;
+    intro: string;
+    body: string;
+    buttonLabel: string;
+    buttonUrl: string;
+    footer: string;
+    backgroundColor: string;
+    cardColor: string;
+    textColor: string;
+    accentColor: string;
+    buttonColor: string;
+    imageUrl: string;
+    imageAlt: string;
+};
 
 const SEGMENT_LABELS: Record<SegmentKey, string> = {
-    all: "Вся база",
+    admins_test: "Список администраторов",
     paid: "Пользователи с оплатой",
     no_paid: "Без оплат",
     calculations: "Пользователи с расчётами",
     inactive_30d: "Неактивные 30 дней",
-    admins_test: "Тест администраторам",
+    all: "Вся база",
 };
 
-const LIVE_SEGMENTS: SegmentKey[] = ["all", "paid", "no_paid", "calculations", "inactive_30d"];
+const SEGMENT_DESCRIPTIONS: Record<SegmentKey, string> = {
+    admins_test: "Безопасный сегмент для теста и служебных писем.",
+    paid: "Только пользователи с подтверждённой оплатой.",
+    no_paid: "Пользователи без оплаченных заказов.",
+    calculations: "Пользователи, у которых есть расчёты.",
+    inactive_30d: "Пользователи без активности последние 30 дней.",
+    all: "Вся пользовательская база. Для этого сегмента нужно подтверждение.",
+};
+
+const SEGMENT_ORDER: SegmentKey[] = ["admins_test", "paid", "no_paid", "calculations", "inactive_30d", "all"];
+
+const DEFAULT_BUILDER_STATE: BuilderState = {
+    preheader: "Короткий анонс письма, который увидят в превью.",
+    title: "Заголовок письма",
+    intro: "Короткое вступление: зачем это письмо и что в нём важного.",
+    body: "Основной текст письма. Здесь можно расписать детали, бонусы, дедлайны и любые пояснения для аудитории.",
+    buttonLabel: "Перейти",
+    buttonUrl: "https://example.com",
+    footer: "Если письмо пришло по ошибке, просто проигнорируйте его.",
+    backgroundColor: "#0b1226",
+    cardColor: "#16213f",
+    textColor: "#f5f0e9",
+    accentColor: "#e0c58f",
+    buttonColor: "#d7b46d",
+    imageUrl: "",
+    imageAlt: "Иллюстрация письма",
+};
 
 function PaperclipIcon({ size = 18 }: { size?: number }) {
     return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.44 11.05l-8.49 8.49a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.19 9.19a2 2 0 01-2.83-2.83l8.49-8.49" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
@@ -42,6 +84,59 @@ function PaperclipIcon({ size = 18 }: { size?: number }) {
 async function getAccessToken() {
     const { data } = await supabase.auth.getSession();
     return data.session?.access_token ?? null;
+}
+
+function escapeHtml(value: string) {
+    return value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function textToHtml(value: string) {
+    return escapeHtml(value).replace(/\n/g, "<br />");
+}
+
+function buildEmailHtml(builder: BuilderState) {
+    const buttonBlock = builder.buttonLabel.trim() && builder.buttonUrl.trim()
+        ? `<tr><td style="padding:0 32px 28px;"><a href="${escapeHtml(builder.buttonUrl)}" style="display:inline-block;padding:14px 22px;border-radius:999px;background:${escapeHtml(builder.buttonColor)};color:#0b1226;font-weight:700;text-decoration:none;">${escapeHtml(builder.buttonLabel)}</a></td></tr>`
+        : "";
+    const imageBlock = builder.imageUrl.trim()
+        ? `<tr><td style="padding:32px 32px 0;"><img src="${escapeHtml(builder.imageUrl)}" alt="${escapeHtml(builder.imageAlt)}" style="display:block;width:100%;max-width:576px;height:auto;border-radius:20px;border:0;" /></td></tr>`
+        : "";
+
+    return `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charSet="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(builder.title)}</title>
+  </head>
+  <body style="margin:0;padding:0;background:${escapeHtml(builder.backgroundColor)};font-family:Arial,Helvetica,sans-serif;color:${escapeHtml(builder.textColor)};">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(builder.preheader)}</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:${escapeHtml(builder.backgroundColor)};padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="width:100%;max-width:640px;background:${escapeHtml(builder.cardColor)};border:1px solid rgba(224,197,143,.18);border-radius:28px;overflow:hidden;">
+            ${imageBlock}
+            <tr><td style="padding:32px 32px 12px;font-size:14px;line-height:1.5;color:${escapeHtml(builder.accentColor)};">${textToHtml(builder.preheader)}</td></tr>
+            <tr><td style="padding:0 32px 12px;font-size:32px;line-height:1.2;font-weight:800;color:${escapeHtml(builder.textColor)};">${textToHtml(builder.title)}</td></tr>
+            <tr><td style="padding:0 32px 14px;font-size:18px;line-height:1.6;color:${escapeHtml(builder.textColor)};">${textToHtml(builder.intro)}</td></tr>
+            <tr><td style="padding:0 32px 24px;font-size:16px;line-height:1.75;color:${escapeHtml(builder.textColor)};">${textToHtml(builder.body)}</td></tr>
+            ${buttonBlock}
+            <tr><td style="padding:0 32px 32px;font-size:13px;line-height:1.6;color:rgba(245,240,233,.72);border-top:1px solid rgba(224,197,143,.12);">${textToHtml(builder.footer)}</td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+function buildEmailText(builder: BuilderState) {
+    return [builder.title, "", builder.intro, "", builder.body, builder.buttonLabel && builder.buttonUrl ? `Ссылка: ${builder.buttonLabel} — ${builder.buttonUrl}` : "", "", builder.footer].filter(Boolean).join("\n");
 }
 
 export default function AdminPage() {
@@ -62,13 +157,19 @@ export default function AdminPage() {
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const bottomRef = useRef<HTMLDivElement | null>(null);
     const [emailCampaigns, setEmailCampaigns] = useState<EmailCampaignRow[]>([]);
-    const [emailSegments, setEmailSegments] = useState<EmailSegmentCounts>({ all: 0, paid: 0, no_paid: 0, calculations: 0, inactive_30d: 0, admins_test: 0 });
-    const [selectedSegment, setSelectedSegment] = useState<SegmentKey>("all");
+    const [emailSegments, setEmailSegments] = useState<EmailSegmentCounts>({ admins_test: 0, paid: 0, no_paid: 0, calculations: 0, inactive_30d: 0, all: 0 });
+    const [selectedSegment, setSelectedSegment] = useState<SegmentKey>("admins_test");
     const [mailSubject, setMailSubject] = useState("");
     const [mailHtml, setMailHtml] = useState("");
     const [mailText, setMailText] = useState("");
     const [mailSending, setMailSending] = useState(false);
     const [mailResult, setMailResult] = useState<string | null>(null);
+    const [builderState, setBuilderState] = useState<BuilderState>(DEFAULT_BUILDER_STATE);
+    const [builderMode, setBuilderMode] = useState<"builder" | "html">("builder");
+    const [builderImageName, setBuilderImageName] = useState<string | null>(null);
+
+    const previewHtml = useMemo(() => buildEmailHtml(builderState), [builderState]);
+    const previewText = useMemo(() => buildEmailText(builderState), [builderState]);
 
     const filteredProfiles = useMemo(() => {
         const s = q.trim().toLowerCase();
@@ -98,6 +199,38 @@ export default function AdminPage() {
 
     function scrollToBottom() {
         requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }));
+    }
+
+    function syncBuilderToMessage(nextState: BuilderState) {
+        setBuilderState(nextState);
+        if (builderMode === "builder") {
+            setMailHtml(buildEmailHtml(nextState));
+            setMailText(buildEmailText(nextState));
+        }
+    }
+
+    function updateBuilder<K extends keyof BuilderState>(key: K, value: BuilderState[K]) {
+        syncBuilderToMessage({ ...builderState, [key]: value });
+    }
+
+    async function handleImageUpload(file: File | null) {
+        if (!file) return;
+        const reader = new FileReader();
+        const result = await new Promise<string>((resolve, reject) => {
+            reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+            reader.onerror = () => reject(reader.error || new Error("Не удалось прочитать картинку."));
+            reader.readAsDataURL(file);
+        });
+        setBuilderImageName(file.name);
+        updateBuilder("imageUrl", result);
+        if (!builderState.imageAlt.trim()) updateBuilder("imageAlt", file.name);
+    }
+
+    function loadBuilderPreset() {
+        const preset = { ...DEFAULT_BUILDER_STATE, title: mailSubject || DEFAULT_BUILDER_STATE.title };
+        setBuilderMode("builder");
+        syncBuilderToMessage(preset);
+        if (!mailSubject.trim()) setMailSubject(preset.title);
     }
 
     async function load() {
@@ -130,12 +263,22 @@ export default function AdminPage() {
         setOrders(json.orders || []);
         setCalcs(json.calculations || []);
         setEmailCampaigns(json.email_campaigns || []);
-        setEmailSegments(json.email_segments || { all: 0, paid: 0, no_paid: 0, calculations: 0, inactive_30d: 0, admins_test: 0 });
+        setEmailSegments(json.email_segments || { admins_test: 0, paid: 0, no_paid: 0, calculations: 0, inactive_30d: 0, all: 0 });
         await loadSupportThreads();
         setLoading(false);
     }
 
-    useEffect(() => { void load();
+    useEffect(() => {
+        void load();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    useEffect(() => {
+        if (!mailSubject.trim() && builderState.title.trim()) setMailSubject(builderState.title);
+        if (!mailHtml.trim() && !mailText.trim()) {
+            setMailHtml(buildEmailHtml(builderState));
+            setMailText(buildEmailText(builderState));
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -248,26 +391,40 @@ export default function AdminPage() {
         }
     }
 
-    async function sendEmailCampaign(testMode = false) {
+    async function sendEmailCampaign() {
         setErr(null);
         setMailResult(null);
         setMailSending(true);
         try {
+            if (selectedSegment === "all") {
+                const confirmed = window.confirm("Вы точно хотите отправить письмо всем пользователям? Это затронет весь сегмент \"Вся база\".");
+                if (!confirmed) return;
+            }
+
             const token = await getAccessToken();
             if (!token) {
                 window.location.href = "/login";
                 return;
             }
-            const res = await fetch("/api/admin/email-campaigns", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ segment_key: selectedSegment, subject: mailSubject, html: mailHtml, text: mailText, test_mode: testMode }) });
+
+            const res = await fetch("/api/admin/email-campaigns", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ segment_key: selectedSegment, subject: mailSubject, html: mailHtml, text: mailText, test_mode: false }),
+            });
             const json = await res.json().catch(() => null);
             if (!res.ok || !json?.ok) {
                 setErr(json?.error || "Не удалось отправить рассылку.");
                 return;
             }
-            setMailResult(testMode ? `Тестовая отправка админам: ${json.sent_count}/${json.recipients_count}, ошибок — ${json.failed_count}.` : `Готово: ${json.sent_count}/${json.recipients_count} писем отправлено, ошибок — ${json.failed_count}.`);
-            setMailSubject("");
-            setMailHtml("");
-            setMailText("");
+
+            const warning = json?.warning ? ` Внимание: ${json.warning}` : "";
+            if (selectedSegment === "admins_test") {
+                setMailResult(`Письмо отправлено по списку администраторов: ${json.sent_count}/${json.recipients_count}, ошибок — ${json.failed_count}.${warning}`);
+            } else {
+                setMailResult(`Готово: ${json.sent_count}/${json.recipients_count} писем отправлено, ошибок — ${json.failed_count}.${warning}`);
+            }
+
             await load();
             setTab("mail");
         } finally {
@@ -309,25 +466,70 @@ export default function AdminPage() {
                 <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 380px) 1fr", gap: 14 }}>
                     <Card title="Сегменты рассылки">
                         <div style={{ display: "grid", gap: 10 }}>
-                            {LIVE_SEGMENTS.map((segment) => {
+                            {SEGMENT_ORDER.map((segment) => {
                                 const active = selectedSegment === segment;
-                                return <button key={segment} onClick={() => setSelectedSegment(segment)} style={{ textAlign: "left", padding: 14, borderRadius: 16, border: active ? "1px solid rgba(224,197,143,.28)" : "1px solid rgba(224,197,143,.10)", background: active ? "rgba(224,197,143,.08)" : "rgba(10,18,38,.18)", color: "rgba(245,240,233,.92)", cursor: "pointer" }}><div style={{ fontWeight: 900 }}>{SEGMENT_LABELS[segment]}</div><div style={{ marginTop: 6, fontSize: 12, color: "rgba(245,240,233,.68)" }}>Получателей: {emailSegments[segment] ?? 0}</div></button>;
+                                return <button key={segment} onClick={() => setSelectedSegment(segment)} style={{ textAlign: "left", padding: 14, borderRadius: 16, border: active ? "1px solid rgba(224,197,143,.28)" : "1px solid rgba(224,197,143,.10)", background: active ? "rgba(224,197,143,.08)" : "rgba(10,18,38,.18)", color: "rgba(245,240,233,.92)", cursor: "pointer" }}><div style={{ fontWeight: 900 }}>{SEGMENT_LABELS[segment]}</div><div style={{ marginTop: 6, fontSize: 12, color: "rgba(245,240,233,.68)" }}>{SEGMENT_DESCRIPTIONS[segment]}</div><div style={{ marginTop: 6, fontSize: 12, color: "rgba(245,240,233,.68)" }}>Получателей: {emailSegments[segment] ?? 0}</div>{segment === "all" && <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,208,120,.88)" }}>Перед отправкой появится дополнительное подтверждение.</div>}</button>;
                             })}
-                            <div style={{ padding: 12, borderRadius: 14, background: "rgba(10,18,38,.18)", fontSize: 12, color: "rgba(245,240,233,.72)" }}>SMTP берётся из env: <strong>SMTP_HOST</strong>, <strong>SMTP_PORT</strong>, <strong>SMTP_USER</strong>, <strong>SMTP_PASS</strong>, <strong>SMTP_FROM</strong>. Ответы на письма уйдут на <strong>SMTP_REPLY_TO</strong> или обратно на <strong>SMTP_FROM</strong>. Тестовый прогон идёт только по адресам администраторов: <strong>{emailSegments.admins_test ?? 0}</strong>.</div>
+                            <div style={{ padding: 12, borderRadius: 14, background: "rgba(10,18,38,.18)", fontSize: 12, color: "rgba(245,240,233,.72)" }}>Если после отправки снова увидишь <strong>stack depth limit exceeded</strong>, это почти наверняка проблема на стороне БД: рекурсивный триггер/политика для таблиц <strong>email_campaigns</strong> или <strong>email_campaign_recipients</strong>. Отправка писем теперь не блокируется из-за этой ошибки, но логи кампании могут не сохраниться.</div>
                         </div>
                     </Card>
                     <Card title="Новая рассылка">
                         <div style={{ display: "grid", gap: 12 }}>
                             <div style={{ fontSize: 13, color: "rgba(245,240,233,.74)" }}>Сегмент: <strong>{SEGMENT_LABELS[selectedSegment]}</strong> · получателей: <strong>{emailSegments[selectedSegment] ?? 0}</strong></div>
                             <input value={mailSubject} onChange={(e) => setMailSubject(e.target.value)} placeholder="Тема письма" style={inputStyle} />
-                            <textarea value={mailText} onChange={(e) => setMailText(e.target.value)} placeholder="Текстовая версия письма" style={{ ...inputStyle, minHeight: 120, resize: "vertical" }} />
-                            <textarea value={mailHtml} onChange={(e) => setMailHtml(e.target.value)} placeholder="HTML-версия письма" style={{ ...inputStyle, minHeight: 220, resize: "vertical", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }} />
-                            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                                <div style={{ fontSize: 12, color: "rgba(245,240,233,.65)" }}>Письма уходят персонально каждому адресу, чтобы не светить базу получателей. Сначала можно сделать тест администраторам.</div>
-                                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                                    <button onClick={() => void sendEmailCampaign(true)} disabled={mailSending || !mailSubject.trim() || (!mailText.trim() && !mailHtml.trim())} style={{ borderRadius: 14, padding: "12px 16px", border: "1px solid rgba(120,230,255,.20)", background: "rgba(120,230,255,.10)", color: "rgba(245,240,233,.92)", fontWeight: 950, cursor: mailSending ? "default" : "pointer", opacity: mailSending ? 0.75 : 1 }}> {mailSending ? "Отправка…" : "Тест администраторам"}</button>
-                                    <button onClick={() => void sendEmailCampaign(false)} disabled={mailSending || !mailSubject.trim() || (!mailText.trim() && !mailHtml.trim())} style={{ borderRadius: 14, padding: "12px 16px", border: "1px solid rgba(224,197,143,.20)", background: "rgba(224,197,143,.12)", color: "rgba(245,240,233,.92)", fontWeight: 950, cursor: mailSending ? "default" : "pointer", opacity: mailSending ? 0.75 : 1 }}> {mailSending ? "Отправка…" : "Отправить рассылку"}</button>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <button type="button" onClick={() => setBuilderMode("builder")} style={builderMode === "builder" ? selectedModeButtonStyle : modeButtonStyle}>Конструктор</button>
+                                <button type="button" onClick={() => { setBuilderMode("html"); setMailHtml(previewHtml); setMailText(previewText); }} style={builderMode === "html" ? selectedModeButtonStyle : modeButtonStyle}>HTML / текст</button>
+                                <button type="button" onClick={loadBuilderPreset} style={modeButtonStyle}>Сбросить шаблон</button>
+                            </div>
+
+                            {builderMode === "builder" ? (
+                                <div style={{ display: "grid", gap: 12 }}>
+                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+                                        <input value={builderState.preheader} onChange={(e) => updateBuilder("preheader", e.target.value)} placeholder="Прехедер" style={inputStyle} />
+                                        <input value={builderState.title} onChange={(e) => { updateBuilder("title", e.target.value); if (!mailSubject.trim()) setMailSubject(e.target.value); }} placeholder="Заголовок" style={inputStyle} />
+                                    </div>
+                                    <textarea value={builderState.intro} onChange={(e) => updateBuilder("intro", e.target.value)} placeholder="Вступление" style={{ ...inputStyle, minHeight: 90, resize: "vertical" }} />
+                                    <textarea value={builderState.body} onChange={(e) => updateBuilder("body", e.target.value)} placeholder="Основной текст письма" style={{ ...inputStyle, minHeight: 140, resize: "vertical" }} />
+                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+                                        <input value={builderState.buttonLabel} onChange={(e) => updateBuilder("buttonLabel", e.target.value)} placeholder="Текст кнопки" style={inputStyle} />
+                                        <input value={builderState.buttonUrl} onChange={(e) => updateBuilder("buttonUrl", e.target.value)} placeholder="https://..." style={inputStyle} />
+                                    </div>
+                                    <textarea value={builderState.footer} onChange={(e) => updateBuilder("footer", e.target.value)} placeholder="Футер письма" style={{ ...inputStyle, minHeight: 80, resize: "vertical" }} />
+                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12 }}>
+                                        <label style={fieldLabelStyle}>Фон<input type="color" value={builderState.backgroundColor} onChange={(e) => updateBuilder("backgroundColor", e.target.value)} style={colorInputStyle} /></label>
+                                        <label style={fieldLabelStyle}>Карточка<input type="color" value={builderState.cardColor} onChange={(e) => updateBuilder("cardColor", e.target.value)} style={colorInputStyle} /></label>
+                                        <label style={fieldLabelStyle}>Текст<input type="color" value={builderState.textColor} onChange={(e) => updateBuilder("textColor", e.target.value)} style={colorInputStyle} /></label>
+                                        <label style={fieldLabelStyle}>Акцент<input type="color" value={builderState.accentColor} onChange={(e) => updateBuilder("accentColor", e.target.value)} style={colorInputStyle} /></label>
+                                        <label style={fieldLabelStyle}>Кнопка<input type="color" value={builderState.buttonColor} onChange={(e) => updateBuilder("buttonColor", e.target.value)} style={colorInputStyle} /></label>
+                                    </div>
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" }}>
+                                        <input value={builderState.imageAlt} onChange={(e) => updateBuilder("imageAlt", e.target.value)} placeholder="Alt для картинки" style={inputStyle} />
+                                        <input value={builderState.imageUrl} onChange={(e) => updateBuilder("imageUrl", e.target.value)} placeholder="URL картинки или data:image/..." style={inputStyle} />
+                                        <label style={{ ...modeButtonStyle, display: "inline-flex", justifyContent: "center", alignItems: "center", minHeight: 46, cursor: "pointer" }}>
+                                            Загрузить картинку
+                                            <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => void handleImageUpload(e.target.files?.[0] ?? null)} />
+                                        </label>
+                                    </div>
+                                    {builderImageName && <div style={{ fontSize: 12, color: "rgba(245,240,233,.65)" }}>Прикреплена картинка: {builderImageName}</div>}
                                 </div>
+                            ) : (
+                                <>
+                                    <textarea value={mailText} onChange={(e) => setMailText(e.target.value)} placeholder="Текстовая версия письма" style={{ ...inputStyle, minHeight: 120, resize: "vertical" }} />
+                                    <textarea value={mailHtml} onChange={(e) => setMailHtml(e.target.value)} placeholder="HTML-версия письма" style={{ ...inputStyle, minHeight: 260, resize: "vertical", fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }} />
+                                </>
+                            )}
+
+                            <div style={{ padding: 14, borderRadius: 16, border: "1px solid rgba(224,197,143,.12)", background: "rgba(10,18,38,.18)" }}>
+                                <div style={{ fontWeight: 900, marginBottom: 10 }}>Предпросмотр письма</div>
+                                <div style={{ borderRadius: 16, overflow: "hidden", border: "1px solid rgba(224,197,143,.12)", background: "#ffffff" }}>
+                                    <iframe title="Предпросмотр email" srcDoc={builderMode === "builder" ? previewHtml : mailHtml} style={{ width: "100%", minHeight: 520, border: 0, background: "#fff" }} />
+                                </div>
+                            </div>
+
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                                <div style={{ fontSize: 12, color: "rgba(245,240,233,.65)" }}>Письма уходят каждому адресу отдельно. Для сегмента «Вся база» будет дополнительное подтверждение перед отправкой.</div>
+                                <button onClick={() => void sendEmailCampaign()} disabled={mailSending || !mailSubject.trim() || (!mailText.trim() && !mailHtml.trim())} style={{ borderRadius: 14, padding: "12px 16px", border: selectedSegment === "all" ? "1px solid rgba(255,208,120,.28)" : "1px solid rgba(224,197,143,.20)", background: selectedSegment === "all" ? "rgba(255,208,120,.12)" : "rgba(224,197,143,.12)", color: "rgba(245,240,233,.92)", fontWeight: 950, cursor: mailSending ? "default" : "pointer", opacity: mailSending ? 0.75 : 1 }}> {mailSending ? "Отправка…" : selectedSegment === "all" ? "Отправить всем пользователям" : `Отправить: ${SEGMENT_LABELS[selectedSegment]}`}</button>
                             </div>
                         </div>
                     </Card>
@@ -335,7 +537,7 @@ export default function AdminPage() {
                         <Card title={`История рассылок (${emailCampaigns.length})`}>
                             <GridHeader cols="180px 1fr 140px 160px 160px">Campaign</GridHeader>
                             {emailCampaigns.map((campaign) => <GridRow key={campaign.id} cols="180px 1fr 140px 160px 160px"><Mono>{String(campaign.id).slice(0, 8)}…</Mono><div><div style={{ fontWeight: 900 }}>{campaign.subject}</div><div style={{ opacity: 0.72, fontSize: 12 }}>{SEGMENT_LABELS[campaign.segment_key] || campaign.segment_key}</div></div><Badge>{campaign.status}</Badge><div style={{ fontSize: 12, opacity: 0.82 }}>Всего: {campaign.recipients_count}<br />Успех: {campaign.sent_count}<br />Ошибки: {campaign.failed_count}</div><div style={{ fontSize: 12, opacity: 0.82 }}>{new Date(campaign.created_at).toLocaleString()}</div></GridRow>)}
-                            {!emailCampaigns.length && <div style={{ color: "rgba(245,240,233,.65)", fontSize: 13, padding: 10 }}>Рассылок пока не было.</div>}
+                            {!emailCampaigns.length && <div style={{ color: "rgba(245,240,233,.65)", fontSize: 13, padding: 10 }}>Рассылок пока не было или логирование кампаний сейчас недоступно.</div>}
                         </Card>
                     </div>
                 </div>
@@ -346,7 +548,11 @@ export default function AdminPage() {
     );
 }
 
-const inputStyle: CSSProperties = { padding: "12px 14px", borderRadius: 14, border: "1px solid rgba(224,197,143,.14)", background: "rgba(10,18,38,.28)", color: "rgba(245,240,233,.92)", outline: "none" };
+const inputStyle: CSSProperties = { padding: "12px 14px", borderRadius: 14, border: "1px solid rgba(224,197,143,.14)", background: "rgba(10,18,38,.28)", color: "rgba(245,240,233,.92)", outline: "none", width: "100%" };
+const modeButtonStyle: CSSProperties = { borderRadius: 12, padding: "10px 12px", border: "1px solid rgba(224,197,143,.16)", background: "rgba(17,34,80,.18)", color: "rgba(245,240,233,.92)", fontWeight: 800 };
+const selectedModeButtonStyle: CSSProperties = { ...modeButtonStyle, border: "1px solid rgba(224,197,143,.32)", background: "rgba(224,197,143,.12)" };
+const fieldLabelStyle: CSSProperties = { display: "grid", gap: 8, fontSize: 12, color: "rgba(245,240,233,.72)" };
+const colorInputStyle: CSSProperties = { width: "100%", height: 42, borderRadius: 12, border: "1px solid rgba(224,197,143,.14)", background: "rgba(10,18,38,.28)", padding: 4 };
 
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
     return <button onClick={onClick} style={{ borderRadius: 999, padding: "8px 12px", border: active ? "1px solid rgba(224,197,143,.30)" : "1px solid rgba(224,197,143,.12)", background: active ? "rgba(224,197,143,.10)" : "rgba(17,34,80,.16)", color: "rgba(245,240,233,.92)", fontWeight: 950, cursor: "pointer" }}>{children}</button>;
