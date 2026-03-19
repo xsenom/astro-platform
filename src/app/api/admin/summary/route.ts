@@ -39,12 +39,7 @@ export async function GET(req: NextRequest) {
     if (!admin) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
     try {
-        const [profilesRes, ordersRes, itemsRes, productsRes, pciRes, calculationsRes, campaignsRes, segmentCounts] = await Promise.all([
-            getAdminClient()
-                .from("profiles")
-                .select("id, email, full_name, birth_date, birth_time, birth_city, created_at, updated_at")
-                .order("created_at", { ascending: false })
-                .limit(500),
+        const [ordersRes, itemsRes, productsRes, pciRes, calculationsRes, campaignsRes, segmentCounts] = await Promise.all([
             getAdminClient()
                 .from("orders")
                 .select("id, user_id, status, amount_cents, currency, provider, provider_order_id, paid_at, created_at")
@@ -62,7 +57,6 @@ export async function GET(req: NextRequest) {
             getSegmentCounts(),
         ]);
 
-        if (profilesRes.error) return NextResponse.json({ ok: false, error: profilesRes.error.message }, { status: 500 });
         if (ordersRes.error) return NextResponse.json({ ok: false, error: ordersRes.error.message }, { status: 500 });
         if (itemsRes.error) return NextResponse.json({ ok: false, error: itemsRes.error.message }, { status: 500 });
         if (productsRes.error) return NextResponse.json({ ok: false, error: productsRes.error.message }, { status: 500 });
@@ -73,7 +67,7 @@ export async function GET(req: NextRequest) {
 
         return NextResponse.json({
             ok: true,
-            profiles: profilesRes.data ?? [],
+            profiles: [],
             orders: ordersRes.data ?? [],
             items: itemsRes.data ?? [],
             products: productsRes.data ?? [],
