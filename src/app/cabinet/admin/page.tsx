@@ -292,6 +292,35 @@ const editorInputStyle: CSSProperties = {
     outline: "none",
 };
 
+function formatBirthDateForInput(value: string | null | undefined) {
+    if (!value) return "";
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return value;
+    return `${match[3]}.${match[2]}.${match[1]}`;
+}
+
+function normalizeBirthDateInput(value: string) {
+    const digits = value.replace(/\D/g, "").slice(0, 8);
+    const parts = [];
+    if (digits.slice(0, 2)) parts.push(digits.slice(0, 2));
+    if (digits.slice(2, 4)) parts.push(digits.slice(2, 4));
+    if (digits.slice(4, 8)) parts.push(digits.slice(4, 8));
+    return parts.join(".");
+}
+
+function normalizeBirthTimeInput(value: string) {
+    const digits = value.replace(/\D/g, "").slice(0, 4);
+    if (digits.length <= 2) return digits;
+    return `${digits.slice(0, 2)}:${digits.slice(2, 4)}`;
+}
+
+function formatBirthTimeForInput(value: string | null | undefined) {
+    if (!value) return "";
+    const [hours = "", minutes = ""] = value.split(":");
+    if (!hours || !minutes) return value;
+    return `${hours.padStart(2, "0")}:${minutes.padStart(2, "0")}`;
+}
+
 function buildEmailText(builder: BuilderState) {
     return [
         builder.title,
@@ -513,8 +542,8 @@ export default function AdminPage() {
             id: profile.id,
             email: profile.email || "",
             full_name: profile.full_name || "",
-            birth_date: profile.birth_date || "",
-            birth_time: profile.birth_time || "",
+            birth_date: formatBirthDateForInput(profile.birth_date),
+            birth_time: formatBirthTimeForInput(profile.birth_time),
             birth_city: profile.birth_city || "",
         });
         setEditorOpen(true);
@@ -552,8 +581,8 @@ export default function AdminPage() {
                     userId: editorState.id,
                     email: editorState.email,
                     full_name: editorState.full_name,
-                    birth_date: editorState.birth_date,
-                    birth_time: editorState.birth_time,
+                    birth_date: normalizeBirthDateInput(editorState.birth_date),
+                    birth_time: normalizeBirthTimeInput(editorState.birth_time),
                     birth_city: editorState.birth_city,
                 }),
             });
@@ -569,8 +598,8 @@ export default function AdminPage() {
                 id: profile.id,
                 email: profile.email || "",
                 full_name: profile.full_name || "",
-                birth_date: profile.birth_date || "",
-                birth_time: profile.birth_time || "",
+                birth_date: formatBirthDateForInput(profile.birth_date),
+                birth_time: formatBirthTimeForInput(profile.birth_time),
                 birth_city: profile.birth_city || "",
             });
             setEditorMessage("Изменения сохранены.");
@@ -1289,8 +1318,15 @@ export default function AdminPage() {
                                 <span style={{ fontSize: 12, opacity: 0.75 }}>Дата рождения</span>
                                 <input
                                     value={editorState.birth_date}
-                                    onChange={(e) => setEditorState((prev) => (prev ? { ...prev, birth_date: e.target.value } : prev))}
-                                    placeholder="YYYY-MM-DD"
+                                    onChange={(e) =>
+                                        setEditorState((prev) =>
+                                            prev ? { ...prev, birth_date: normalizeBirthDateInput(e.target.value) } : prev
+                                        )
+                                    }
+                                    type="text"
+                                    placeholder="dd.mm.yyyy"
+                                    inputMode="numeric"
+                                    maxLength={10}
                                     style={editorInputStyle}
                                 />
                             </label>
@@ -1298,8 +1334,15 @@ export default function AdminPage() {
                                 <span style={{ fontSize: 12, opacity: 0.75 }}>Время рождения</span>
                                 <input
                                     value={editorState.birth_time}
-                                    onChange={(e) => setEditorState((prev) => (prev ? { ...prev, birth_time: e.target.value } : prev))}
-                                    placeholder="HH:MM"
+                                    onChange={(e) =>
+                                        setEditorState((prev) =>
+                                            prev ? { ...prev, birth_time: normalizeBirthTimeInput(e.target.value) } : prev
+                                        )
+                                    }
+                                    type="text"
+                                    placeholder="hh:mm"
+                                    inputMode="numeric"
+                                    maxLength={5}
                                     style={editorInputStyle}
                                 />
                             </label>

@@ -41,6 +41,33 @@ function normalizeOptional(value: string | null | undefined) {
     return trimmed ? trimmed : null;
 }
 
+function parseBirthDateInput(value: string | null) {
+    if (!value) return null;
+
+    const dotMatch = value.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    if (dotMatch) {
+        const [, day, month, year] = dotMatch;
+        return `${year}-${month}-${day}`;
+    }
+
+    const isoMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoMatch) return value;
+
+    throw new Error("Дата рождения должна быть в формате дд.мм.гггг.");
+}
+
+function parseBirthTimeInput(value: string | null) {
+    if (!value) return null;
+
+    const hhmm = value.match(/^(\d{2}):(\d{2})$/);
+    if (hhmm) return `${hhmm[1]}:${hhmm[2]}:00`;
+
+    const hhmmss = value.match(/^(\d{2}):(\d{2}):(\d{2})$/);
+    if (hhmmss) return value;
+
+    throw new Error("Время рождения должно быть в формате ЧЧ:ММ.");
+}
+
 function getResetRedirectUrl(req: NextRequest) {
     const publicAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
     if (publicAppUrl) {
@@ -129,8 +156,8 @@ export async function PATCH(req: NextRequest) {
         }
 
         const fullName = normalizeOptional(body.full_name);
-        const birthDate = normalizeOptional(body.birth_date);
-        const birthTime = normalizeOptional(body.birth_time);
+        const birthDate = parseBirthDateInput(normalizeOptional(body.birth_date));
+        const birthTime = parseBirthTimeInput(normalizeOptional(body.birth_time));
         const birthCity = normalizeOptional(body.birth_city);
 
         const adminClient = getAdminClient();
