@@ -45,6 +45,18 @@ type SavedCalculationRow = {
     file_name?: string | null;
 };
 
+type AdminState = {
+    isAdmin: boolean;
+    isSuper: boolean;
+};
+
+type InterpretationState = {
+    loading: boolean;
+    text: string | null;
+    error: string | null;
+    model: string | null;
+};
+
 function pad2(n: number) {
     return String(n).padStart(2, "0");
 }
@@ -108,6 +120,7 @@ export default function CalculationsPage() {
     const [profile, setProfile] = useState<BirthProfile | null>(null);
 
     const [userId, setUserId] = useState<string | null>(null);
+    const [adminState, setAdminState] = useState<AdminState>({ isAdmin: false, isSuper: false });
 
     const [products, setProducts] = useState<ProductRow[]>([]);
     const [accessMap, setAccessMap] = useState<Record<CalcKind, boolean>>({
@@ -132,6 +145,14 @@ export default function CalculationsPage() {
         source: "saved" | "fresh" | null;
         updatedAt?: string | null;
     }>({ source: null, updatedAt: null });
+    const [interpretation, setInterpretation] = useState<InterpretationState>({
+        loading: false,
+        text: null,
+        error: null,
+        model: null,
+    });
+    const [activeNatalInterpretationTitle, setActiveNatalInterpretationTitle] =
+        useState<string | null>(null);
 
     const targetDate = toYMD(new Date());
 
@@ -154,6 +175,17 @@ export default function CalculationsPage() {
     }, [dateParts, timeParts, profile?.birth_city]);
 
     const canRun = missingFields.length === 0;
+    const natalInterpretationSections = useMemo(
+        () =>
+            result?.kind === "natal" && interpretation.text
+                ? extractMarkdownSections(interpretation.text)
+                : [],
+        [result?.kind, interpretation.text]
+    );
+    const activeNatalInterpretationSection =
+        natalInterpretationSections.find(
+            (section) => section.title === activeNatalInterpretationTitle
+        ) ?? natalInterpretationSections[0] ?? null;
 
     useEffect(() => {
         if (!loading || !activeKind) return;
@@ -186,8 +218,10 @@ export default function CalculationsPage() {
 
             const uid = userData.user.id;
             setUserId(uid);
+            const { data: sessionData } = await supabase.auth.getSession();
+            const token = sessionData.session?.access_token ?? null;
 
-            const [profileResp, productsResp, accessResp, savedResp] = await Promise.all([
+            const [profileResp, productsResp, accessResp, savedResp, adminResp] = await Promise.all([
                 supabase
                     .from("profiles")
                     .select("birth_date, birth_time, birth_city")
@@ -210,6 +244,9 @@ export default function CalculationsPage() {
                     .select("id, kind, target_date, result_text, result_json, input_params, updated_at, pdf_url, pdf_path, file_name")
                     .eq("user_id", uid)
                     .order("updated_at", { ascending: false }),
+                token
+                    ? fetch("/api/admin/me", { headers: { Authorization: `Bearer ${token}` } }).then((res) => res.json().catch(() => null))
+                    : Promise.resolve(null),
             ]);
 
             console.log("profileResp", profileResp);
@@ -229,6 +266,11 @@ export default function CalculationsPage() {
             } else {
                 setProducts((productsResp.data ?? []) as ProductRow[]);
             }
+
+            setAdminState({
+                isAdmin: !!adminResp?.is_admin,
+                isSuper: !!adminResp?.is_super,
+            });
 
             const nextAccess: Record<CalcKind, boolean> = {
                 natal: true,
@@ -250,6 +292,13 @@ export default function CalculationsPage() {
                 for (const row of accessRows) {
                     nextAccess[row.product_code] = true;
                 }
+            }
+
+            if (adminResp?.is_admin) {
+                nextAccess.day = true;
+                nextAccess.week = true;
+                nextAccess.month = true;
+                nextAccess.big_calendar = true;
             }
 
             setAccessMap(nextAccess);
@@ -279,7 +328,46 @@ export default function CalculationsPage() {
     }
 
     function isPurchased(kind: CalcKind) {
-        return !!accessMap[kind];
+        return adminState.isAdmin || !!accessMap[kind];
+    }
+
+    async function loadInterpretation(kind: CalcKind, resultText: string, raw: any) {
+        setInterpretation({ loading: true, text: null, error: null, model: "gpt-4.1-mini" });
+
+        try {
+            const res = await fetch("/api/astro/interpret", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ kind, resultText, raw }),
+            });
+            const json = await res.json().catch(() => null);
+
+            if (!res.ok) throw new Error(json?.error || "Не удалось получить ИИ-интерпретацию.");
+
+            if (json?.skipped) {
+                setInterpretation({
+                    loading: false,
+                    text: null,
+                    error: "ИИ-интерпретация пока не настроена: добавьте OPENAI_API_KEY и при необходимости ASTRO_PROMPT_*. ",
+                    model: null,
+                });
+                return;
+            }
+
+            setInterpretation({
+                loading: false,
+                text: json?.interpretation || null,
+                error: json?.interpretation ? null : "ИИ не вернул текст интерпретации.",
+                model: json?.model || "gpt-4.1-mini",
+            });
+        } catch (e: any) {
+            setInterpretation({
+                loading: false,
+                text: null,
+                error: e?.message || "Ошибка ИИ-интерпретации.",
+                model: null,
+            });
+        }
     }
 
     async function callJson(url: string) {
@@ -466,6 +554,7 @@ export default function CalculationsPage() {
             } as any);
 
             setResultMeta({ source: "fresh", updatedAt: null });
+            void loadInterpretation("big_calendar", text, json);
 
             setSavedMap((prev) => ({
                 ...prev,
@@ -508,6 +597,7 @@ export default function CalculationsPage() {
             source: "saved",
             updatedAt: row.updated_at,
         });
+        void loadInterpretation(kind, row.result_text, row.result_json);
 
         return true;
     }
@@ -556,6 +646,7 @@ export default function CalculationsPage() {
             });
 
             setResultMeta({ source: "fresh", updatedAt: null });
+            void loadInterpretation("natal", text, json);
 
             await saveCalculation({
                 kind: "natal",
@@ -631,6 +722,7 @@ export default function CalculationsPage() {
             });
 
             setResultMeta({ source: "fresh", updatedAt: null });
+            void loadInterpretation("day", text, json);
 
             await saveCalculation({
                 kind: "day",
@@ -705,6 +797,7 @@ export default function CalculationsPage() {
             });
 
             setResultMeta({ source: "fresh", updatedAt: null });
+            void loadInterpretation("week", text || "Пустой ответ", json);
 
             await saveCalculation({
                 kind: "week",
@@ -781,6 +874,7 @@ export default function CalculationsPage() {
             });
 
             setResultMeta({ source: "fresh", updatedAt: null });
+            void loadInterpretation("month", text, json);
 
             await saveCalculation({
                 kind: "month",
@@ -899,6 +993,11 @@ export default function CalculationsPage() {
                 }}
             >
                 <div style={{ fontSize: 24, fontWeight: 950 }}>Прогнозы</div>
+                {adminState.isAdmin && (
+                    <div style={{ marginTop: 10, ...tagStyle("rgba(110,170,255,.14)") }}>
+                        Режим администратора: все расчёты на этой вкладке доступны бесплатно.
+                    </div>
+                )}
 
 
 
@@ -1031,6 +1130,49 @@ export default function CalculationsPage() {
                         );
                     })}
                 </div>
+
+                {result?.kind === "natal" && !!natalInterpretationSections.length && (
+                    <div
+                        style={{
+                            marginTop: 16,
+                            display: "grid",
+                            gap: 8,
+                            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                        }}
+                    >
+                        {natalInterpretationSections.map((section) => {
+                            const active =
+                                section.title === (activeNatalInterpretationSection?.title ?? null);
+
+                            return (
+                                <button
+                                    key={section.title}
+                                    onClick={() => setActiveNatalInterpretationTitle(section.title)}
+                                    style={{
+                                        textAlign: "left",
+                                        borderRadius: 16,
+                                        padding: "14px 16px",
+                                        border: active
+                                            ? "1px solid rgba(214,244,157,.38)"
+                                            : "1px solid rgba(214,244,157,.18)",
+                                        background: active
+                                            ? "linear-gradient(180deg, rgba(174,210,113,.28), rgba(124,159,75,.34))"
+                                            : "linear-gradient(180deg, rgba(174,210,113,.18), rgba(124,159,75,.24))",
+                                        color: "rgba(255,255,255,.96)",
+                                        fontWeight: 900,
+                                        cursor: "pointer",
+                                        lineHeight: 1.4,
+                                        boxShadow: active
+                                            ? "0 10px 30px rgba(109, 141, 56, .22)"
+                                            : "none",
+                                    }}
+                                >
+                                    {section.title}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
 
             {err && (
@@ -1067,8 +1209,12 @@ export default function CalculationsPage() {
                     }}
                 >
                     <div style={{ fontSize: 16, fontWeight: 950 }}>Результат</div>
-
-
+                    {resultMeta.source && (
+                        <div style={tagStyle(resultMeta.source === "saved" ? "rgba(90,220,150,.12)" : "rgba(110,170,255,.14)")}>
+                            {resultMeta.source === "saved" ? "Сохранённый результат" : "Свежий расчёт"}
+                            {resultMeta.updatedAt ? ` · ${new Date(resultMeta.updatedAt).toLocaleString("ru-RU")}` : ""}
+                        </div>
+                    )}
                 </div>
 
 
@@ -1095,22 +1241,37 @@ export default function CalculationsPage() {
 
                 {result && !loading && (
                     <div style={{ display: "grid", gap: 12 }}>
-        <pre
-            style={{
-                margin: 0,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                padding: 14,
-                borderRadius: 16,
-                border: "1px solid rgba(224,197,143,.10)",
-                background: "rgba(10,18,38,.18)",
-                color: "rgba(245,240,233,.92)",
-                fontSize: 13,
-                lineHeight: 1.6,
-            }}
-        >
-            {result.text}
-        </pre>
+                        {result.kind === "natal" && <NatalResultView text={result.text} />}
+
+                        <div
+                            style={{
+                                padding: 16,
+                                borderRadius: 18,
+                                border: "1px solid rgba(110,170,255,.18)",
+                                background: "linear-gradient(180deg, rgba(74,120,255,.12), rgba(10,18,38,.18))",
+                                display: "grid",
+                                gap: 10,
+                            }}
+                        >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                <div style={{ fontWeight: 900, fontSize: 16 }}>ИИ-интерпретация</div>
+                                <div style={tagStyle("rgba(110,170,255,.14)")}>{interpretation.model || "gpt-4.1-mini"}</div>
+                            </div>
+                            {interpretation.loading && <div style={{ color: "rgba(245,240,233,.78)" }}>Анализируем аспекты и собираем живую интерпретацию…</div>}
+                            {!interpretation.loading && interpretation.error && <div style={{ color: "rgba(255,210,160,.9)", lineHeight: 1.6 }}>{interpretation.error}</div>}
+                            {!interpretation.loading && interpretation.text && (
+                                result.kind === "natal" ? (
+                                    <MarkdownCard
+                                        text={
+                                            activeNatalInterpretationSection?.body.join("\n").trim() ||
+                                            interpretation.text
+                                        }
+                                    />
+                                ) : (
+                                    <MarkdownCard text={interpretation.text} />
+                                )
+                            )}
+                        </div>
 
                         {"raw" in result && result.raw?.pdf_url && (
                             <a
@@ -1179,4 +1340,219 @@ function btn(): React.CSSProperties {
         fontWeight: 950,
         cursor: "pointer",
     };
+}
+
+type MarkdownSection = {
+    title: string;
+    body: string[];
+};
+
+function NatalResultView({ text }: { text: string }) {
+    const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+    const header = lines.find((line) => line.startsWith("Натальная карта"));
+    const facts = lines.filter((line) => /^(📍|🕒|🗓|🌅|☊|☋)/.test(line));
+    const personal = collectLines(lines, "👤 Личные планеты:");
+    const social = collectLines(lines, "🏛 Социальные планеты:");
+    const higher = collectLines(lines, "✨ Высшие планеты:");
+
+    return (
+        <div style={{ display: "grid", gap: 14 }}>
+            {header && (
+                <div style={{ padding: 18, borderRadius: 18, border: "1px solid rgba(224,197,143,.14)", background: "linear-gradient(180deg, rgba(224,197,143,.10), rgba(10,18,38,.18))", fontSize: 18, fontWeight: 900 }}>
+                    {header}
+                </div>
+            )}
+            {!!facts.length && (
+                <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                    {facts.map((item) => (
+                        <div key={item} style={{ padding: 14, borderRadius: 16, border: "1px solid rgba(224,197,143,.12)", background: "rgba(10,18,38,.18)", lineHeight: 1.6 }}>
+                            {item}
+                        </div>
+                    ))}
+                </div>
+            )}
+            <PlanetSection title="Личные планеты" items={personal} />
+            <PlanetSection title="Социальные планеты" items={social} />
+            <PlanetSection title="Высшие планеты" items={higher} />
+        </div>
+    );
+}
+
+function PlanetSection({ title, items }: { title: string; items: string[] }) {
+    if (!items.length) return null;
+
+    return (
+        <div style={{ padding: 16, borderRadius: 18, border: "1px solid rgba(224,197,143,.12)", background: "rgba(10,18,38,.18)", display: "grid", gap: 10 }}>
+            <div style={{ fontWeight: 900, fontSize: 16 }}>{title}</div>
+            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+                {items.map((item) => (
+                    <div key={item} style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(224,197,143,.10)", background: "rgba(17,34,80,.16)", lineHeight: 1.6 }}>
+                        {item.replace(/^•\s*/, "")}
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function collectLines(lines: string[], marker: string) {
+    const startIndex = lines.indexOf(marker);
+    if (startIndex === -1) return [];
+
+    const items: string[] = [];
+    for (let i = startIndex + 1; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (/^(👤|🏛|✨)/.test(line)) break;
+        if (line.startsWith("•")) items.push(line);
+    }
+    return items;
+}
+
+function MarkdownCard({ text }: { text: string }) {
+    const blocks = useMemo(() => parseMarkdownBlocks(text), [text]);
+
+    return (
+        <div style={{ display: "grid", gap: 12, color: "rgba(245,240,233,.94)" }}>
+            {blocks.map((block, index) => {
+                if (block.type === "heading") {
+                    return (
+                        <div key={`${block.type}-${index}`} style={{ fontWeight: 900, fontSize: 18 }}>
+                            {renderInlineMarkdown(block.text)}
+                        </div>
+                    );
+                }
+
+                if (block.type === "ordered") {
+                    return (
+                        <ol
+                            key={`${block.type}-${index}`}
+                            style={{ margin: 0, paddingLeft: 22, display: "grid", gap: 10, lineHeight: 1.75 }}
+                        >
+                            {block.items.map((item, itemIndex) => (
+                                <li key={`${item}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>
+                            ))}
+                        </ol>
+                    );
+                }
+
+                if (block.type === "unordered") {
+                    return (
+                        <ul
+                            key={`${block.type}-${index}`}
+                            style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 8, lineHeight: 1.7 }}
+                        >
+                            {block.items.map((item, itemIndex) => (
+                                <li key={`${item}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>
+                            ))}
+                        </ul>
+                    );
+                }
+
+                return (
+                    <p key={`${block.type}-${index}`} style={{ margin: 0, lineHeight: 1.75 }}>
+                        {renderInlineMarkdown(block.text)}
+                    </p>
+                );
+            })}
+        </div>
+    );
+}
+
+function renderInlineMarkdown(text: string) {
+    const normalized = text.replace(/\*\*\*/g, "**").replace(/###\s*/g, "");
+    const parts = normalized.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+
+    return parts.map((part, index) => {
+        if (part.startsWith("**") && part.endsWith("**")) {
+            return <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>;
+        }
+
+        return <span key={`${part}-${index}`}>{part}</span>;
+    });
+}
+
+function extractMarkdownSections(text: string): MarkdownSection[] {
+    const lines = text.split("\n");
+    const sections: MarkdownSection[] = [];
+    let current: MarkdownSection | null = null;
+
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        const headingMatch = line.match(/^#{2,3}\s+(.+)$/);
+        if (headingMatch) {
+            current = { title: headingMatch[1].replace(/\*\*/g, "").trim(), body: [] };
+            sections.push(current);
+            continue;
+        }
+
+        if (!current) {
+            current = { title: "Общий разбор", body: [] };
+            sections.push(current);
+        }
+
+        current.body.push(line);
+    }
+
+    return sections;
+}
+
+function parseMarkdownBlocks(text: string) {
+    const lines = text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    const blocks: Array<
+        | { type: "heading"; text: string }
+        | { type: "paragraph"; text: string }
+        | { type: "ordered"; items: string[] }
+        | { type: "unordered"; items: string[] }
+    > = [];
+
+    let index = 0;
+    while (index < lines.length) {
+        const line = lines[index];
+
+        if (/^#{1,3}\s+/.test(line)) {
+            blocks.push({ type: "heading", text: line.replace(/^#{1,3}\s+/, "") });
+            index += 1;
+            continue;
+        }
+
+        if (/^\d+\.\s+/.test(line)) {
+            const items: string[] = [];
+            while (index < lines.length && /^\d+\.\s+/.test(lines[index])) {
+                items.push(lines[index].replace(/^\d+\.\s+/, ""));
+                index += 1;
+            }
+            blocks.push({ type: "ordered", items });
+            continue;
+        }
+
+        if (/^[-•]\s+/.test(line)) {
+            const items: string[] = [];
+            while (index < lines.length && /^[-•]\s+/.test(lines[index])) {
+                items.push(lines[index].replace(/^[-•]\s+/, ""));
+                index += 1;
+            }
+            blocks.push({ type: "unordered", items });
+            continue;
+        }
+
+        const paragraphLines: string[] = [];
+        while (
+            index < lines.length &&
+            !/^#{1,3}\s+/.test(lines[index]) &&
+            !/^\d+\.\s+/.test(lines[index]) &&
+            !/^[-•]\s+/.test(lines[index])
+        ) {
+            paragraphLines.push(lines[index]);
+            index += 1;
+        }
+        blocks.push({ type: "paragraph", text: paragraphLines.join(" ") });
+    }
+
+    return blocks;
 }
