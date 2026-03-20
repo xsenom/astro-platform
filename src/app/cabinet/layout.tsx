@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import MoonRouteTransition from "@/components/MoonRouteTransition";
@@ -23,6 +23,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     const [isAdmin, setIsAdmin] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [isMobile, setIsMobile] = useState(false);
+    const pendingNavigationDoneRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
         let active = true;
@@ -77,8 +78,26 @@ function Shell({ children }: { children: React.ReactNode }) {
         window.location.href = "/login";
     }
 
+    useEffect(() => {
+        if (!pendingNavigationDoneRef.current) return;
+
+        const done = pendingNavigationDoneRef.current;
+        pendingNavigationDoneRef.current = null;
+
+        const frameId = window.requestAnimationFrame(() => {
+            window.setTimeout(() => {
+                done();
+            }, 0);
+        });
+
+        return () => window.cancelAnimationFrame(frameId);
+    }, [pathname]);
+
     function navigateTo(href: string) {
-        startLoading();
+        if (href === pathname || href.startsWith(`${pathname}/`)) return;
+
+        pendingNavigationDoneRef.current?.();
+        pendingNavigationDoneRef.current = startLoading();
         setIsMobileMenuOpen(false);
         router.push(href);
     }
