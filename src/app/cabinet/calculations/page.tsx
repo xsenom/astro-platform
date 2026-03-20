@@ -1080,7 +1080,9 @@ export default function CalculationsPage() {
                         marginTop: 16,
                         display: "grid",
                         gap: 12,
-                        gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                        gridTemplateColumns:
+                            "repeat(auto-fit, minmax(min(100%, 280px), 340px))",
+                        justifyContent: "center",
                     }}
                 >
                     {products.map((product) => {
@@ -1094,28 +1096,44 @@ export default function CalculationsPage() {
                             <div
                                 key={product.code}
                                 style={{
+                                    width: "100%",
+                                    maxWidth: 340,
+                                    minHeight: "100%",
+                                    justifySelf: "center",
                                     padding: 16,
                                     borderRadius: 18,
                                     border: "1px solid rgba(224,197,143,.14)",
                                     background: "rgba(10,18,38,.18)",
                                     display: "grid",
-                                    gap: 10,
+                                    gap: 12,
+                                    gridTemplateRows: "auto minmax(88px, auto) minmax(34px, auto) auto",
                                 }}
                             >
                                 <div
                                     style={{
                                         display: "flex",
+                                        alignItems: "flex-start",
                                         justifyContent: "space-between",
-                                        gap: 8,
+                                        gap: 12,
                                     }}
                                 >
-                                    <div style={{ fontWeight: 900, fontSize: 16 }}>
+                                    <div
+                                        style={{
+                                            flex: 1,
+                                            minWidth: 0,
+                                            fontWeight: 900,
+                                            fontSize: 16,
+                                            lineHeight: 1.45,
+                                        }}
+                                    >
                                         {product.title}
                                     </div>
 
                                     <div
                                         style={{
-                                            padding: "6px 10px",
+                                            flexShrink: 0,
+                                            minWidth: 88,
+                                            padding: "6px 18px",
                                             borderRadius: 999,
                                             fontSize: 12,
                                             fontWeight: 800,
@@ -1127,6 +1145,7 @@ export default function CalculationsPage() {
                                                     : "rgba(224,197,143,.10)",
                                             color: "rgba(245,240,233,.92)",
                                             whiteSpace: "nowrap",
+                                            textAlign: "center",
                                         }}
                                     >
                                         {product.is_free
@@ -1141,7 +1160,7 @@ export default function CalculationsPage() {
                                     style={{
                                         color: "rgba(245,240,233,.72)",
                                         lineHeight: 1.5,
-                                        minHeight: 44,
+                                        minHeight: 88,
                                     }}
                                 >
                                     {product.description || "Описание скоро будет добавлено"}
@@ -1152,6 +1171,8 @@ export default function CalculationsPage() {
                                         display: "flex",
                                         gap: 8,
                                         flexWrap: "wrap",
+                                        alignItems: "flex-start",
+                                        minHeight: 34,
                                     }}
                                 >
                                     {hasSaved && (
@@ -1169,7 +1190,7 @@ export default function CalculationsPage() {
                                 <button
                                     disabled={!canRun || profileLoading || loading}
                                     onClick={() => handleAction(product.code)}
-                                    style={btn()}
+                                    style={{ ...btn(), width: "100%" }}
                                 >
                                     {loading && activeKind === product.code
                                         ? "Выполняется…"
