@@ -53,6 +53,16 @@ type CalculationRow = {
     updated_at: string | null;
 };
 
+type SavedCalculationOption = {
+    id: string;
+    kind: string;
+    target_date: string | null;
+    updated_at: string | null;
+    pdf_url: string | null;
+    file_name: string | null;
+    result_text: string;
+};
+
 type SupportThreadRow = {
     id: string;
     created_at: string;
@@ -174,6 +184,18 @@ function getSupportUserLabel(thread: Pick<SupportThreadRow, "user_name" | "user_
     if (name) return name;
     if (email) return email;
     return `ID: ${thread.user_id}`;
+}
+
+function getCalculationLabel(kind: string) {
+    const labels: Record<string, string> = {
+        natal: "Натальная карта",
+        day: "Прогноз на день",
+        week: "Прогноз на неделю",
+        month: "Прогноз на месяц",
+        big_calendar: "Большой календарь",
+    };
+
+    return labels[kind] ?? kind;
 }
 
 const DEFAULT_BUILDER_STATE: BuilderState = {
@@ -411,6 +433,10 @@ export default function AdminPage() {
     const [editorMessage, setEditorMessage] = useState<string | null>(null);
     const [editorError, setEditorError] = useState<string | null>(null);
     const [editorState, setEditorState] = useState<UserEditorState | null>(null);
+    const [editorCalculations, setEditorCalculations] = useState<SavedCalculationOption[]>([]);
+    const [editorCalculationsLoading, setEditorCalculationsLoading] = useState(false);
+    const [editorSelectedCalcId, setEditorSelectedCalcId] = useState<string>("");
+    const [editorCalcSending, setEditorCalcSending] = useState(false);
     const [usersPagination, setUsersPagination] = useState<UsersPagination>({
         page: 1,
         pageSize: 50,
@@ -645,9 +671,44 @@ export default function AdminPage() {
         }
     }
 
+    async function loadUserCalculations(userId: string) {
+        setEditorCalculationsLoading(true);
+
+        try {
+            const token = await getAccessToken();
+            if (!token) {
+                window.location.href = "/login";
+                return;
+            }
+
+            const res = await fetch(`/api/admin/user-calculations?userId=${encodeURIComponent(userId)}`, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
+
+            const json = await res.json().catch(() => null);
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || "Не удалось загрузить расчёты пользователя.");
+            }
+
+            const calculations = Array.isArray(json.calculations) ? (json.calculations as SavedCalculationOption[]) : [];
+            setEditorCalculations(calculations);
+            setEditorSelectedCalcId(calculations[0]?.id || "");
+        } catch (e) {
+            setEditorCalculations([]);
+            setEditorSelectedCalcId("");
+            setEditorError(e instanceof Error ? e.message : "Не удалось загрузить расчёты пользователя.");
+        } finally {
+            setEditorCalculationsLoading(false);
+        }
+    }
+
     function openUserEditor(profile: ProfileRow) {
         setEditorError(null);
         setEditorMessage(null);
+        setEditorCalculations([]);
+        setEditorSelectedCalcId("");
         setEditorState({
             id: profile.id,
             email: profile.email || "",
@@ -657,15 +718,18 @@ export default function AdminPage() {
             birth_city: profile.birth_city || "",
         });
         setEditorOpen(true);
+        void loadUserCalculations(profile.id);
     }
 
 
     function closeUserEditor() {
-        if (editorSaving || editorResetting) return;
+        if (editorSaving || editorResetting || editorCalcSending) return;
         setEditorOpen(false);
         setEditorError(null);
         setEditorMessage(null);
         setEditorState(null);
+        setEditorCalculations([]);
+        setEditorSelectedCalcId("");
     }
 
     async function saveUserEditor() {
@@ -725,6 +789,45 @@ export default function AdminPage() {
             setEditorError(e instanceof Error ? e.message : "Не удалось сохранить пользователя.");
         } finally {
             setEditorSaving(false);
+        }
+    }
+
+    async function sendSelectedCalculation() {
+        if (!editorState || !editorSelectedCalcId) return;
+
+        setEditorCalcSending(true);
+        setEditorError(null);
+        setEditorMessage(null);
+
+        try {
+            const token = await getAccessToken();
+            if (!token) {
+                window.location.href = "/login";
+                return;
+            }
+
+            const res = await fetch("/api/admin/user-calculations", {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    userId: editorState.id,
+                    calcId: editorSelectedCalcId,
+                }),
+            });
+
+            const json = await res.json().catch(() => null);
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || "Не удалось отправить расчёт на почту.");
+            }
+
+            setEditorMessage(json.message || "Расчёт отправлен на почту клиента.");
+        } catch (e) {
+            setEditorError(e instanceof Error ? e.message : "Не удалось отправить расчёт на почту.");
+        } finally {
+            setEditorCalcSending(false);
         }
     }
 
@@ -1415,8 +1518,8 @@ export default function AdminPage() {
                             </div>
                             <button
                                 onClick={closeUserEditor}
-                                disabled={editorSaving || editorResetting}
-                                style={paginationButtonStyle(editorSaving || editorResetting)}
+                                disabled={editorSaving || editorResetting || editorCalcSending}
+                                style={paginationButtonStyle(editorSaving || editorResetting || editorCalcSending)}
                             >
                                 Закрыть
                             </button>
@@ -1481,19 +1584,68 @@ export default function AdminPage() {
                             />
                         </label>
 
+                        <div
+                            style={{
+                                display: "grid",
+                                gap: 10,
+                                padding: 14,
+                                borderRadius: 16,
+                                border: "1px solid rgba(224,197,143,.14)",
+                                background: "rgba(10,18,38,.22)",
+                            }}
+                        >
+                            <div style={{ fontWeight: 900 }}>Отправить готовый расчёт клиенту</div>
+                            <div style={{ fontSize: 12, opacity: 0.75 }}>
+                                Можно выбрать любой готовый расчёт пользователя и сразу отправить его на email клиента.
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
+                                <select
+                                    value={editorSelectedCalcId}
+                                    onChange={(e) => setEditorSelectedCalcId(e.target.value)}
+                                    disabled={editorCalculationsLoading || editorCalcSending || !editorCalculations.length}
+                                    style={editorInputStyle}
+                                >
+                                    {!editorCalculations.length ? (
+                                        <option value="">
+                                            {editorCalculationsLoading ? "Загружаем расчёты..." : "Нет доступных расчётов"}
+                                        </option>
+                                    ) : (
+                                        editorCalculations.map((calc) => (
+                                            <option key={calc.id} value={calc.id}>
+                                                {getCalculationLabel(calc.kind)}
+                                                {calc.target_date ? ` • ${calc.target_date}` : ""}
+                                                {calc.updated_at ? ` • ${new Date(calc.updated_at).toLocaleDateString("ru-RU")}` : ""}
+                                            </option>
+                                        ))
+                                    )}
+                                </select>
+                                <button
+                                    onClick={() => void sendSelectedCalculation()}
+                                    disabled={!editorSelectedCalcId || editorCalculationsLoading || editorCalcSending}
+                                    style={actionButtonStyle(
+                                        !editorSelectedCalcId || editorCalculationsLoading || editorCalcSending,
+                                        "rgba(147,197,114,.12)",
+                                        "1px solid rgba(147,197,114,.24)"
+                                    )}
+                                >
+                                    {editorCalcSending ? "Отправляем..." : "Отправить расчёт"}
+                                </button>
+                            </div>
+                        </div>
+
                         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between" }}>
                             <button
                                 onClick={() => void sendPasswordReset()}
-                                disabled={editorSaving || editorResetting}
-                                style={actionButtonStyle(editorSaving || editorResetting, "rgba(120,230,255,.10)", "1px solid rgba(120,230,255,.22)")}
+                                disabled={editorSaving || editorResetting || editorCalcSending}
+                                style={actionButtonStyle(editorSaving || editorResetting || editorCalcSending, "rgba(120,230,255,.10)", "1px solid rgba(120,230,255,.22)")}
                             >
                                 {editorResetting ? "Отправляем..." : "Сбросить пароль"}
                             </button>
 
                             <button
                                 onClick={() => void saveUserEditor()}
-                                disabled={editorSaving || editorResetting}
-                                style={actionButtonStyle(editorSaving || editorResetting, "rgba(224,197,143,.10)", "1px solid rgba(224,197,143,.22)")}
+                                disabled={editorSaving || editorResetting || editorCalcSending}
+                                style={actionButtonStyle(editorSaving || editorResetting || editorCalcSending, "rgba(224,197,143,.10)", "1px solid rgba(224,197,143,.22)")}
                             >
                                 {editorSaving ? "Сохраняем..." : "Сохранить изменения"}
                             </button>
