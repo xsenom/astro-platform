@@ -10,7 +10,7 @@ const BASE_NAV = [
     { href: "/cabinet/profile", label: "Ваши данные" },
     { href: "/cabinet/calculations", label: "Прогнозы" },
     { href: "/cabinet/purchases", label: "Покупки" },
-    { href: "/cabinet/courses", label: "Еще курсы" },
+    { href: "/cabinet/courses", label: "Курсы" },
     { href: "/cabinet/support", label: "Поддержка" },
 ] as const;
 

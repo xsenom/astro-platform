@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { supabase } from "@/lib/supabase/client";
 
 type CalcKind = "natal" | "day" | "week" | "month" | "big_calendar";
@@ -120,7 +120,10 @@ export default function CalculationsPage() {
     const [profile, setProfile] = useState<BirthProfile | null>(null);
 
     const [userId, setUserId] = useState<string | null>(null);
-    const [adminState, setAdminState] = useState<AdminState>({ isAdmin: false, isSuper: false });
+    const [adminState, setAdminState] = useState<AdminState>({
+        isAdmin: false,
+        isSuper: false,
+    });
 
     const [products, setProducts] = useState<ProductRow[]>([]);
     const [accessMap, setAccessMap] = useState<Record<CalcKind, boolean>>({
@@ -145,12 +148,14 @@ export default function CalculationsPage() {
         source: "saved" | "fresh" | null;
         updatedAt?: string | null;
     }>({ source: null, updatedAt: null });
+
     const [interpretation, setInterpretation] = useState<InterpretationState>({
         loading: false,
         text: null,
         error: null,
         model: null,
     });
+
     const [activeNatalInterpretationTitle, setActiveNatalInterpretationTitle] =
         useState<string | null>(null);
 
@@ -175,6 +180,7 @@ export default function CalculationsPage() {
     }, [dateParts, timeParts, profile?.birth_city]);
 
     const canRun = missingFields.length === 0;
+
     const natalInterpretationSections = useMemo(
         () =>
             result?.kind === "natal" && interpretation.text
@@ -182,10 +188,13 @@ export default function CalculationsPage() {
                 : [],
         [result?.kind, interpretation.text]
     );
+
     const activeNatalInterpretationSection =
         natalInterpretationSections.find(
             (section) => section.title === activeNatalInterpretationTitle
-        ) ?? natalInterpretationSections[0] ?? null;
+        ) ??
+        natalInterpretationSections[0] ??
+        null;
 
     useEffect(() => {
         if (!loading || !activeKind) return;
@@ -203,6 +212,10 @@ export default function CalculationsPage() {
         void bootstrap();
     }, []);
 
+    useEffect(() => {
+        setActiveNatalInterpretationTitle(null);
+    }, [interpretation.text, result?.kind]);
+
     async function bootstrap() {
         setProfileLoading(true);
         setProfileError(null);
@@ -218,10 +231,17 @@ export default function CalculationsPage() {
 
             const uid = userData.user.id;
             setUserId(uid);
+
             const { data: sessionData } = await supabase.auth.getSession();
             const token = sessionData.session?.access_token ?? null;
 
-            const [profileResp, productsResp, accessResp, savedResp, adminResp] = await Promise.all([
+            const [
+                profileResp,
+                productsResp,
+                accessResp,
+                savedResp,
+                adminResp,
+            ] = await Promise.all([
                 supabase
                     .from("profiles")
                     .select("birth_date, birth_time, birth_city")
@@ -230,7 +250,9 @@ export default function CalculationsPage() {
 
                 supabase
                     .from("calculation_products")
-                    .select("code, title, description, price_rub, is_free, is_active, sort_order")
+                    .select(
+                        "code, title, description, price_rub, is_free, is_active, sort_order"
+                    )
                     .eq("is_active", true)
                     .order("sort_order", { ascending: true }),
 
@@ -241,18 +263,18 @@ export default function CalculationsPage() {
 
                 supabase
                     .from("saved_calculations")
-                    .select("id, kind, target_date, result_text, result_json, input_params, updated_at, pdf_url, pdf_path, file_name")
+                    .select(
+                        "id, kind, target_date, result_text, result_json, input_params, updated_at, pdf_url, pdf_path, file_name"
+                    )
                     .eq("user_id", uid)
                     .order("updated_at", { ascending: false }),
+
                 token
-                    ? fetch("/api/admin/me", { headers: { Authorization: `Bearer ${token}` } }).then((res) => res.json().catch(() => null))
+                    ? fetch("/api/admin/me", {
+                        headers: { Authorization: `Bearer ${token}` },
+                    }).then((res) => res.json().catch(() => null))
                     : Promise.resolve(null),
             ]);
-
-            console.log("profileResp", profileResp);
-            console.log("productsResp", productsResp);
-            console.log("accessResp", accessResp);
-            console.log("savedResp", savedResp);
 
             if (profileResp.error) {
                 setProfileError(profileResp.error.message);
@@ -261,7 +283,9 @@ export default function CalculationsPage() {
             }
 
             if (productsResp.error) {
-                setErr(`Не удалось загрузить список расчётов: ${productsResp.error.message}`);
+                setErr(
+                    `Не удалось загрузить список расчётов: ${productsResp.error.message}`
+                );
                 setProducts([]);
             } else {
                 setProducts((productsResp.data ?? []) as ProductRow[]);
@@ -332,7 +356,12 @@ export default function CalculationsPage() {
     }
 
     async function loadInterpretation(kind: CalcKind, resultText: string, raw: any) {
-        setInterpretation({ loading: true, text: null, error: null, model: "gpt-4.1-mini" });
+        setInterpretation({
+            loading: true,
+            text: null,
+            error: null,
+            model: "gpt-4.1-mini",
+        });
 
         try {
             const res = await fetch("/api/astro/interpret", {
@@ -340,15 +369,21 @@ export default function CalculationsPage() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ kind, resultText, raw }),
             });
+
             const json = await res.json().catch(() => null);
 
-            if (!res.ok) throw new Error(json?.error || "Не удалось получить ИИ-интерпретацию.");
+            if (!res.ok) {
+                throw new Error(
+                    json?.error || "Не удалось получить ИИ-интерпретацию."
+                );
+            }
 
             if (json?.skipped) {
                 setInterpretation({
                     loading: false,
                     text: null,
-                    error: "ИИ-интерпретация пока не настроена: добавьте OPENAI_API_KEY и при необходимости ASTRO_PROMPT_*. ",
+                    error:
+                        "ИИ-интерпретация пока не настроена: добавьте OPENAI_API_KEY и при необходимости ASTRO_PROMPT_*.",
                     model: null,
                 });
                 return;
@@ -357,7 +392,9 @@ export default function CalculationsPage() {
             setInterpretation({
                 loading: false,
                 text: json?.interpretation || null,
-                error: json?.interpretation ? null : "ИИ не вернул текст интерпретации.",
+                error: json?.interpretation
+                    ? null
+                    : "ИИ не вернул текст интерпретации.",
                 model: json?.model || "gpt-4.1-mini",
             });
         } catch (e: any) {
@@ -503,7 +540,9 @@ export default function CalculationsPage() {
             }
         } catch (e: any) {
             console.error("saveCalculation unexpected error:", e);
-            setErr(`Ошибка сохранения расчёта: ${e?.message || "Неизвестная ошибка"}`);
+            setErr(
+                `Ошибка сохранения расчёта: ${e?.message || "Неизвестная ошибка"}`
+            );
         }
     }
 
@@ -551,7 +590,7 @@ export default function CalculationsPage() {
                 kind: "big_calendar",
                 text,
                 raw: json,
-            } as any);
+            });
 
             setResultMeta({ source: "fresh", updatedAt: null });
             void loadInterpretation("big_calendar", text, json);
@@ -578,6 +617,7 @@ export default function CalculationsPage() {
             setActiveKind(null);
         }
     }
+
     function showSaved(kind: CalcKind) {
         const row = savedMap[kind];
         if (!row) return false;
@@ -597,8 +637,8 @@ export default function CalculationsPage() {
             source: "saved",
             updatedAt: row.updated_at,
         });
-        void loadInterpretation(kind, row.result_text, row.result_json);
 
+        void loadInterpretation(kind, row.result_text, row.result_json);
         return true;
     }
 
@@ -978,9 +1018,11 @@ export default function CalculationsPage() {
 
         if (kind === "month") {
             void runMonth();
-            return;
         }
     }
+
+    const showNatalResultBlock =
+        (loading && activeKind === "natal") || (result?.kind === "natal");
 
     return (
         <div style={{ display: "grid", gap: 16 }}>
@@ -993,13 +1035,6 @@ export default function CalculationsPage() {
                 }}
             >
                 <div style={{ fontSize: 24, fontWeight: 950 }}>Прогнозы</div>
-                {adminState.isAdmin && (
-                    <div style={{ marginTop: 10, ...tagStyle("rgba(110,170,255,.14)") }}>
-                        Режим администратора: все расчёты на этой вкладке доступны бесплатно.
-                    </div>
-                )}
-
-
 
                 {profileLoading && (
                     <div style={{ marginTop: 14, color: "rgba(245,240,233,.75)" }}>
@@ -1035,8 +1070,8 @@ export default function CalculationsPage() {
                             color: "rgba(245,240,233,.86)",
                         }}
                     >
-                        Список расчётов пуст. Проверь таблицу <b>calculation_products</b> и поля{" "}
-                        <b>is_active = true</b>.
+                        Список расчётов пуст. Проверь таблицу{" "}
+                        <b>calculation_products</b> и поля <b>is_active = true</b>.
                     </div>
                 )}
 
@@ -1067,8 +1102,16 @@ export default function CalculationsPage() {
                                     gap: 10,
                                 }}
                             >
-                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                                    <div style={{ fontWeight: 900, fontSize: 16 }}>{product.title}</div>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        gap: 8,
+                                    }}
+                                >
+                                    <div style={{ fontWeight: 900, fontSize: 16 }}>
+                                        {product.title}
+                                    </div>
 
                                     <div
                                         style={{
@@ -1104,12 +1147,22 @@ export default function CalculationsPage() {
                                     {product.description || "Описание скоро будет добавлено"}
                                 </div>
 
-                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        gap: 8,
+                                        flexWrap: "wrap",
+                                    }}
+                                >
                                     {hasSaved && (
-                                        <div style={tagStyle("rgba(90,220,150,.12)")}>Сохранено</div>
+                                        <div style={tagStyle("rgba(90,220,150,.12)")}>
+                                            Сохранено
+                                        </div>
                                     )}
                                     {!product.is_free && purchased && (
-                                        <div style={tagStyle("rgba(110,170,255,.14)")}>Доступ открыт</div>
+                                        <div style={tagStyle("rgba(110,170,255,.14)")}>
+                                            Доступ открыт
+                                        </div>
                                     )}
                                 </div>
 
@@ -1131,155 +1184,104 @@ export default function CalculationsPage() {
                     })}
                 </div>
 
-                {result?.kind === "natal" && !!natalInterpretationSections.length && (
-                    <div
-                        style={{
-                            marginTop: 16,
-                            padding: 12,
-                            borderRadius: 18,
-                            border: "1px solid rgba(224,197,143,.14)",
-                            background: "rgba(17,34,80,.16)",
-                        }}
-                    >
-                        <div
-                            style={{
-                                display: "grid",
-                                gap: 8,
-                                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                            }}
-                        >
-                            {natalInterpretationSections.map((section) => {
-                                const active =
-                                    section.title === (activeNatalInterpretationSection?.title ?? null);
-
-                                return (
-                                    <button
-                                        key={section.title}
-                                        onClick={() => setActiveNatalInterpretationTitle(section.title)}
+                {result && !loading && (
+                    <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
+                        {result.kind === "natal" &&
+                            !!natalInterpretationSections.length && (
+                                <div
+                                    style={{
+                                        padding: 12,
+                                        borderRadius: 18,
+                                        border: "1px solid rgba(224,197,143,.14)",
+                                        background: "rgba(17,34,80,.16)",
+                                    }}
+                                >
+                                    <div
                                         style={{
-                                            textAlign: "left",
-                                            borderRadius: 16,
-                                            padding: "14px 16px",
-                                            border: active
-                                                ? "1px solid rgba(214,244,157,.38)"
-                                                : "1px solid rgba(214,244,157,.18)",
-                                            background: active
-                                                ? "linear-gradient(180deg, rgba(174,210,113,.28), rgba(124,159,75,.34))"
-                                                : "linear-gradient(180deg, rgba(174,210,113,.18), rgba(124,159,75,.24))",
-                                            color: "rgba(255,255,255,.96)",
-                                            fontWeight: 900,
-                                            cursor: "pointer",
-                                            lineHeight: 1.4,
-                                            boxShadow: active
-                                                ? "0 10px 30px rgba(109, 141, 56, .22)"
-                                                : "none",
+                                            display: "grid",
+                                            gap: 8,
+                                            gridTemplateColumns:
+                                                "repeat(auto-fit, minmax(220px, 1fr))",
                                         }}
                                     >
-                                        {section.title}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                )}
-            </div>
+                                        {natalInterpretationSections.map((section) => {
+                                            const active =
+                                                section.title ===
+                                                (activeNatalInterpretationSection?.title ??
+                                                    null);
 
-            {err && (
-                <div
-                    style={{
-                        padding: 16,
-                        borderRadius: 18,
-                        border: "1px solid rgba(255,110,90,.22)",
-                        background: "rgba(255,110,90,.06)",
-                    }}
-                >
-                    <div style={{ fontWeight: 900 }}>Ошибка</div>
-                    <div style={{ marginTop: 6, color: "rgba(245,240,233,.80)" }}>{err}</div>
-                </div>
-            )}
-
-            <div
-                style={{
-                    padding: 18,
-                    borderRadius: 22,
-                    border: "1px solid rgba(224,197,143,.14)",
-                    background: "rgba(17,34,80,.16)",
-                    minHeight: "42vh",
-                }}
-            >
-                <div
-                    style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 10,
-                        alignItems: "center",
-                        flexWrap: "wrap",
-                        marginBottom: 12,
-                    }}
-                >
-                    <div style={{ fontSize: 16, fontWeight: 950 }}>Результат</div>
-                    {resultMeta.source && (
-                        <div style={tagStyle(resultMeta.source === "saved" ? "rgba(90,220,150,.12)" : "rgba(110,170,255,.14)")}>
-                            {resultMeta.source === "saved" ? "Сохранённый результат" : "Свежий расчёт"}
-                            {resultMeta.updatedAt ? ` · ${new Date(resultMeta.updatedAt).toLocaleString("ru-RU")}` : ""}
-                        </div>
-                    )}
-                </div>
-
-
-
-                {loading && activeKind && (
-                    <div
-                        style={{
-                            padding: 16,
-                            borderRadius: 18,
-                            border: "1px solid rgba(224,197,143,.12)",
-                            background: "rgba(10,18,38,.18)",
-                        }}
-                    >
-                        <div style={{ fontWeight: 900, fontSize: 16 }}>
-                            {loadingLabels[activeKind][loadingStep]}
-                            <AnimatedDots />
-                        </div>
-                        <div style={{ marginTop: 8, color: "rgba(245,240,233,.72)" }}>
-                            Пожалуйста, подождите. После завершения результат автоматически
-                            сохранится в кабинете.
-                        </div>
-                    </div>
-                )}
-
-                {result && !loading && (
-                    <div style={{ display: "grid", gap: 12 }}>
-                        {result.kind === "natal" && <NatalResultView text={result.text} />}
+                                            return (
+                                                <button
+                                                    key={section.title}
+                                                    onClick={() =>
+                                                        setActiveNatalInterpretationTitle(
+                                                            section.title
+                                                        )
+                                                    }
+                                                    style={{
+                                                        textAlign: "left",
+                                                        borderRadius: 16,
+                                                        padding: "14px 16px",
+                                                        border: active
+                                                            ? "1px solid rgba(214,244,157,.38)"
+                                                            : "1px solid rgba(214,244,157,.18)",
+                                                        background: active
+                                                            ? "linear-gradient(180deg, rgba(174,210,113,.28), rgba(124,159,75,.34))"
+                                                            : "linear-gradient(180deg, rgba(174,210,113,.18), rgba(124,159,75,.24))",
+                                                        color: "rgba(255,255,255,.96)",
+                                                        fontWeight: 900,
+                                                        cursor: "pointer",
+                                                        lineHeight: 1.4,
+                                                        boxShadow: active
+                                                            ? "0 10px 30px rgba(109, 141, 56, .22)"
+                                                            : "none",
+                                                    }}
+                                                >
+                                                    {section.title}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
 
                         <div
                             style={{
                                 padding: 16,
                                 borderRadius: 18,
                                 border: "1px solid rgba(110,170,255,.18)",
-                                background: "linear-gradient(180deg, rgba(74,120,255,.12), rgba(10,18,38,.18))",
+                                background:
+                                    "linear-gradient(180deg, rgba(74,120,255,.12), rgba(10,18,38,.18))",
                                 display: "grid",
                                 gap: 10,
                             }}
                         >
-                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                                <div style={{ fontWeight: 900, fontSize: 16 }}>ИИ-интерпретация</div>
-                                <div style={tagStyle("rgba(110,170,255,.14)")}>{interpretation.model || "gpt-4.1-mini"}</div>
-                            </div>
-                            {interpretation.loading && <div style={{ color: "rgba(245,240,233,.78)" }}>Анализируем аспекты и собираем живую интерпретацию…</div>}
-                            {!interpretation.loading && interpretation.error && <div style={{ color: "rgba(255,210,160,.9)", lineHeight: 1.6 }}>{interpretation.error}</div>}
-                            {!interpretation.loading && interpretation.text && (
-                                result.kind === "natal" ? (
+                            {interpretation.loading && <AstroLoading />}
+
+                            {!interpretation.loading && interpretation.error && (
+                                <div
+                                    style={{
+                                        color: "rgba(255,210,160,.9)",
+                                        lineHeight: 1.6,
+                                    }}
+                                >
+                                    {interpretation.error}
+                                </div>
+                            )}
+
+                            {!interpretation.loading &&
+                                interpretation.text &&
+                                (result.kind === "natal" ? (
                                     <MarkdownCard
                                         text={
-                                            activeNatalInterpretationSection?.body.join("\n").trim() ||
-                                            interpretation.text
+                                            activeNatalInterpretationSection?.body
+                                                .join("\n")
+                                                .trim() || interpretation.text
                                         }
                                     />
                                 ) : (
                                     <MarkdownCard text={interpretation.text} />
-                                )
-                            )}
+                                ))}
                         </div>
 
                         {"raw" in result && result.raw?.pdf_url && (
@@ -1304,8 +1306,81 @@ export default function CalculationsPage() {
                         )}
                     </div>
                 )}
-
             </div>
+
+            {err && (
+                <div
+                    style={{
+                        padding: 16,
+                        borderRadius: 18,
+                        border: "1px solid rgba(255,110,90,.22)",
+                        background: "rgba(255,110,90,.06)",
+                    }}
+                >
+                    <div style={{ fontWeight: 900 }}>Ошибка</div>
+                    <div style={{ marginTop: 6, color: "rgba(245,240,233,.80)" }}>
+                        {err}
+                    </div>
+                </div>
+            )}
+
+            {showNatalResultBlock && (
+                <div
+                    style={{
+                        padding: 18,
+                        borderRadius: 22,
+                        border: "1px solid rgba(224,197,143,.14)",
+                        background: "rgba(17,34,80,.16)",
+                        minHeight: "42vh",
+                    }}
+                >
+                    <div
+                        style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            marginBottom: 12,
+                        }}
+                    >
+                        <div style={{ fontSize: 16, fontWeight: 950 }}>Натальная карта</div>
+
+
+                    </div>
+
+                    {loading && activeKind === "natal" && (
+                        <div
+                            style={{
+                                padding: 16,
+                                borderRadius: 18,
+                                border: "1px solid rgba(224,197,143,.12)",
+                                background: "rgba(10,18,38,.18)",
+                            }}
+                        >
+                            <div style={{ fontWeight: 900, fontSize: 16 }}>
+                                {loadingLabels[activeKind][loadingStep]}
+                                <AnimatedDots />
+                            </div>
+                            <div
+                                style={{
+                                    marginTop: 8,
+                                    color: "rgba(245,240,233,.72)",
+                                }}
+                            >
+                                Пожалуйста, подождите. После завершения результат
+                                автоматически сохранится в кабинете.
+                            </div>
+                        </div>
+                    )}
+
+                    {result?.kind === "natal" && !loading && (
+                        <div style={{ display: "grid", gap: 12 }}>
+                            <NatalResultView text={result.text} />
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
@@ -1327,7 +1402,183 @@ function AnimatedDots() {
     return <span>{dots}</span>;
 }
 
-function tagStyle(bg: string): React.CSSProperties {
+function AstroLoading() {
+    const phrases = useMemo(
+        () => [
+            "Сопоставляем положения планет и раскрываем главные смыслы…",
+            "Считываем взаимосвязи планет и выделяем главное…",
+            "Изучаем астрологические акценты и формируем ваш разбор…",
+            "Соединяем положения планет в цельную картину…",
+            "Выделяем сильные акценты карты и ключевые тенденции…",
+            "Анализируем небесные влияния и собираем персональный разбор…",
+            "Рассматриваем аспекты планет и ищем важные подсказки…",
+            "Выявляем ведущие темы периода и основные энергии…",
+            "Собираем ключевые астрологические акценты вашего прогноза…",
+            "Определяем, какие влияния сейчас выходят на первый план…",
+        ],
+        []
+    );
+
+    const [phraseIndex, setPhraseIndex] = useState(() =>
+        Math.floor(Math.random() * phrases.length)
+    );
+
+    useEffect(() => {
+        const timer = window.setInterval(() => {
+            setPhraseIndex((prev) => {
+                if (phrases.length <= 1) return prev;
+
+                let next = prev;
+                while (next === prev) {
+                    next = Math.floor(Math.random() * phrases.length);
+                }
+                return next;
+            });
+        }, 3000);
+
+        return () => window.clearInterval(timer);
+    }, [phrases]);
+
+    return (
+        <div
+            style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                color: "rgba(245,240,233,.88)",
+            }}
+        >
+            <div
+                style={{
+                    position: "relative",
+                    width: 54,
+                    height: 54,
+                    flex: "0 0 54px",
+                }}
+            >
+                <div
+                    style={{
+                        position: "absolute",
+                        inset: 0,
+                        borderRadius: "50%",
+                        border: "1px solid rgba(224,197,143,.22)",
+                        animation: "astroOrbit 5.5s linear infinite",
+                    }}
+                />
+                <div
+                    style={{
+                        position: "absolute",
+                        inset: 8,
+                        borderRadius: "50%",
+                        border: "1px solid rgba(110,170,255,.22)",
+                        animation: "astroOrbitReverse 4.2s linear infinite",
+                    }}
+                />
+                <div
+                    style={{
+                        position: "absolute",
+                        left: "50%",
+                        top: "50%",
+                        width: 10,
+                        height: 10,
+                        marginLeft: -5,
+                        marginTop: -5,
+                        borderRadius: "50%",
+                        background: "rgba(224,197,143,.95)",
+                        boxShadow: "0 0 16px rgba(224,197,143,.45)",
+                        animation: "astroPulse 1.8s ease-in-out infinite",
+                    }}
+                />
+                <div
+                    style={{
+                        position: "absolute",
+                        left: "50%",
+                        top: 1,
+                        width: 6,
+                        height: 6,
+                        marginLeft: -3,
+                        borderRadius: "50%",
+                        background: "rgba(214,244,157,.95)",
+                        boxShadow: "0 0 10px rgba(214,244,157,.35)",
+                    }}
+                />
+                <div
+                    style={{
+                        position: "absolute",
+                        right: 7,
+                        top: "50%",
+                        width: 5,
+                        height: 5,
+                        marginTop: -2.5,
+                        borderRadius: "50%",
+                        background: "rgba(110,170,255,.95)",
+                        boxShadow: "0 0 10px rgba(110,170,255,.35)",
+                    }}
+                />
+            </div>
+
+            <div style={{ display: "grid", gap: 4 }}>
+                <div style={{ fontWeight: 900 }}>Анализируем аспекты</div>
+                <div
+                    key={phraseIndex}
+                    style={{
+                        color: "rgba(245,240,233,.62)",
+                        fontSize: 14,
+                        lineHeight: 1.5,
+                        animation: "astroFade 0.45s ease",
+                    }}
+                >
+                    {phrases[phraseIndex]}
+                </div>
+            </div>
+
+            <style jsx>{`
+                @keyframes astroOrbit {
+                    from {
+                        transform: rotate(0deg);
+                    }
+                    to {
+                        transform: rotate(360deg);
+                    }
+                }
+
+                @keyframes astroOrbitReverse {
+                    from {
+                        transform: rotate(360deg);
+                    }
+                    to {
+                        transform: rotate(0deg);
+                    }
+                }
+
+                @keyframes astroPulse {
+                    0%,
+                    100% {
+                        transform: scale(0.9);
+                        opacity: 0.85;
+                    }
+                    50% {
+                        transform: scale(1.18);
+                        opacity: 1;
+                    }
+                }
+
+                @keyframes astroFade {
+                    from {
+                        opacity: 0;
+                        transform: translateY(4px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `}</style>
+        </div>
+    );
+}
+
+function tagStyle(bg: string): CSSProperties {
     return {
         padding: "6px 10px",
         borderRadius: 999,
@@ -1339,7 +1590,7 @@ function tagStyle(bg: string): React.CSSProperties {
     };
 }
 
-function btn(): React.CSSProperties {
+function btn(): CSSProperties {
     return {
         borderRadius: 14,
         padding: "11px 13px",
@@ -1357,29 +1608,43 @@ type MarkdownSection = {
 };
 
 function NatalResultView({ text }: { text: string }) {
-    const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
-    const header = lines.find((line) => line.startsWith("Натальная карта"));
-    const facts = lines.filter((line) => /^(📍|🕒|🗓|🌅|☊|☋)/.test(line));
+    const lines = text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    const facts = lines.filter((line) => /^(🌅|☊|☋)/.test(line));
     const personal = collectLines(lines, "👤 Личные планеты:");
     const social = collectLines(lines, "🏛 Социальные планеты:");
     const higher = collectLines(lines, "✨ Высшие планеты:");
 
     return (
         <div style={{ display: "grid", gap: 14 }}>
-            {header && (
-                <div style={{ padding: 18, borderRadius: 18, border: "1px solid rgba(224,197,143,.14)", background: "linear-gradient(180deg, rgba(224,197,143,.10), rgba(10,18,38,.18))", fontSize: 18, fontWeight: 900 }}>
-                    {header}
-                </div>
-            )}
             {!!facts.length && (
-                <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                <div
+                    style={{
+                        display: "grid",
+                        gap: 10,
+                        gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                    }}
+                >
                     {facts.map((item) => (
-                        <div key={item} style={{ padding: 14, borderRadius: 16, border: "1px solid rgba(224,197,143,.12)", background: "rgba(10,18,38,.18)", lineHeight: 1.6 }}>
+                        <div
+                            key={item}
+                            style={{
+                                padding: 14,
+                                borderRadius: 16,
+                                border: "1px solid rgba(224,197,143,.12)",
+                                background: "rgba(10,18,38,.18)",
+                                lineHeight: 1.6,
+                            }}
+                        >
                             {item}
                         </div>
                     ))}
                 </div>
             )}
+
             <PlanetSection title="Личные планеты" items={personal} />
             <PlanetSection title="Социальные планеты" items={social} />
             <PlanetSection title="Высшие планеты" items={higher} />
@@ -1391,11 +1656,35 @@ function PlanetSection({ title, items }: { title: string; items: string[] }) {
     if (!items.length) return null;
 
     return (
-        <div style={{ padding: 16, borderRadius: 18, border: "1px solid rgba(224,197,143,.12)", background: "rgba(10,18,38,.18)", display: "grid", gap: 10 }}>
+        <div
+            style={{
+                padding: 16,
+                borderRadius: 18,
+                border: "1px solid rgba(224,197,143,.12)",
+                background: "rgba(10,18,38,.18)",
+                display: "grid",
+                gap: 10,
+            }}
+        >
             <div style={{ fontWeight: 900, fontSize: 16 }}>{title}</div>
-            <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+            <div
+                style={{
+                    display: "grid",
+                    gap: 8,
+                    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                }}
+            >
                 {items.map((item) => (
-                    <div key={item} style={{ padding: 12, borderRadius: 14, border: "1px solid rgba(224,197,143,.10)", background: "rgba(17,34,80,.16)", lineHeight: 1.6 }}>
+                    <div
+                        key={item}
+                        style={{
+                            padding: 12,
+                            borderRadius: 14,
+                            border: "1px solid rgba(224,197,143,.10)",
+                            background: "rgba(17,34,80,.16)",
+                            lineHeight: 1.6,
+                        }}
+                    >
                         {item.replace(/^•\s*/, "")}
                     </div>
                 ))}
@@ -1425,7 +1714,10 @@ function MarkdownCard({ text }: { text: string }) {
             {blocks.map((block, index) => {
                 if (block.type === "heading") {
                     return (
-                        <div key={`${block.type}-${index}`} style={{ fontWeight: 900, fontSize: 18 }}>
+                        <div
+                            key={`${block.type}-${index}`}
+                            style={{ fontWeight: 900, fontSize: 18 }}
+                        >
                             {renderInlineMarkdown(block.text)}
                         </div>
                     );
@@ -1435,10 +1727,18 @@ function MarkdownCard({ text }: { text: string }) {
                     return (
                         <ol
                             key={`${block.type}-${index}`}
-                            style={{ margin: 0, paddingLeft: 22, display: "grid", gap: 10, lineHeight: 1.75 }}
+                            style={{
+                                margin: 0,
+                                paddingLeft: 22,
+                                display: "grid",
+                                gap: 10,
+                                lineHeight: 1.75,
+                            }}
                         >
                             {block.items.map((item, itemIndex) => (
-                                <li key={`${item}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>
+                                <li key={`${item}-${itemIndex}`}>
+                                    {renderInlineMarkdown(item)}
+                                </li>
                             ))}
                         </ol>
                     );
@@ -1448,17 +1748,28 @@ function MarkdownCard({ text }: { text: string }) {
                     return (
                         <ul
                             key={`${block.type}-${index}`}
-                            style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 8, lineHeight: 1.7 }}
+                            style={{
+                                margin: 0,
+                                paddingLeft: 20,
+                                display: "grid",
+                                gap: 8,
+                                lineHeight: 1.7,
+                            }}
                         >
                             {block.items.map((item, itemIndex) => (
-                                <li key={`${item}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>
+                                <li key={`${item}-${itemIndex}`}>
+                                    {renderInlineMarkdown(item)}
+                                </li>
                             ))}
                         </ul>
                     );
                 }
 
                 return (
-                    <p key={`${block.type}-${index}`} style={{ margin: 0, lineHeight: 1.75 }}>
+                    <p
+                        key={`${block.type}-${index}`}
+                        style={{ margin: 0, lineHeight: 1.75 }}
+                    >
                         {renderInlineMarkdown(block.text)}
                     </p>
                 );
@@ -1484,6 +1795,7 @@ function extractMarkdownSections(text: string): MarkdownSection[] {
     const lines = text.split("\n");
     const sections: MarkdownSection[] = [];
     let current: MarkdownSection | null = null;
+
     const natalFallbackTitles = [
         "Общий разбор",
         "Ключевой характер",
@@ -1491,7 +1803,6 @@ function extractMarkdownSections(text: string): MarkdownSection[] {
         "Зоны роста",
         "Отношения",
         "Реализация",
-        "Короткий итог",
     ];
 
     for (const rawLine of lines) {
@@ -1500,7 +1811,10 @@ function extractMarkdownSections(text: string): MarkdownSection[] {
 
         const headingMatch = line.match(/^#{2,3}\s+(.+)$/);
         if (headingMatch) {
-            current = { title: headingMatch[1].replace(/\*\*/g, "").trim(), body: [] };
+            current = {
+                title: headingMatch[1].replace(/\*\*/g, "").trim(),
+                body: [],
+            };
             sections.push(current);
             continue;
         }
@@ -1570,6 +1884,7 @@ function parseMarkdownBlocks(text: string) {
     > = [];
 
     let index = 0;
+
     while (index < lines.length) {
         const line = lines[index];
 
@@ -1605,10 +1920,11 @@ function parseMarkdownBlocks(text: string) {
             !/^#{1,3}\s+/.test(lines[index]) &&
             !/^\d+\.\s+/.test(lines[index]) &&
             !/^[-•]\s+/.test(lines[index])
-        ) {
+            ) {
             paragraphLines.push(lines[index]);
             index += 1;
         }
+
         blocks.push({ type: "paragraph", text: paragraphLines.join(" ") });
     }
 

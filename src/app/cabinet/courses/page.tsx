@@ -34,7 +34,7 @@ export default function CoursesPage() {
                     <AstroLoader />
 
                     <div style={{ textAlign: "center", display: "grid", gap: 10, maxWidth: 700 }}>
-                        <div style={{ fontSize: 34, fontWeight: 950 }}>Еще курсы</div>
+                        <div style={{ fontSize: 34, fontWeight: 950 }}>Курсы</div>
                         <div
                             style={{
                                 fontSize: 18,
@@ -42,8 +42,7 @@ export default function CoursesPage() {
                                 color: "rgba(245,240,233,.84)",
                             }}
                         >
-                            Раздел в разработке. Здесь скоро появятся дополнительные
-                            астрологические курсы, мини-программы и новые обучающие форматы.
+                            Раздел в разработке.
                         </div>
                     </div>
 
@@ -57,9 +56,9 @@ export default function CoursesPage() {
                         }}
                     >
                         {[
-                            "🌙 Лунные циклы",
-                            "🪐 Астрология отношений",
-                            "✨ Практика интерпретации карт",
+                            "🪐 Программа \"Азбука астролога\"",
+                            "❤️ Программа \"Время Любви\"",
+                            "🙌 Программа \"Гороскоп здоровья\"",
                         ].map((item) => (
                             <div
                                 key={item}
