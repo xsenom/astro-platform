@@ -717,18 +717,17 @@ export default function AdminPage() {
                 throw new Error(json?.error || "Не удалось загрузить расчёты пользователя.");
             }
 
-            const savedCalculations = Array.isArray(json.calculations) ? (json.calculations as SavedCalculationOption[]) : [];
-            const queuedForecasts = calcs
-                .filter((calc) => calc.user_id === userId)
-                .filter((calc) => ["day", "week", "month", "big_calendar"].includes(String(calc.calc_type_id || "").trim()))
-                .map((calc) => ({
-                    id: calc.id,
-                    source: "queue" as const,
-                    kind: String(calc.calc_type_id || "").trim(),
-                    target_date: null,
-                    updated_at: calc.updated_at,
-                    status: calc.status,
-                }));
+            const savedCalculations = Array.isArray(json.savedCalculations) ? (json.savedCalculations as SavedCalculationOption[]) : [];
+            const queuedForecasts = Array.isArray(json.queueCalculations)
+                ? (json.queueCalculations as Array<{ id: string; kind: string; status: string | null; updated_at: string | null }>).map((calc) => ({
+                      id: calc.id,
+                      source: "queue" as const,
+                      kind: calc.kind,
+                      target_date: null,
+                      updated_at: calc.updated_at,
+                      status: calc.status,
+                  }))
+                : [];
 
             const mergedCalculations = [
                 ...savedCalculations.map((calc) => ({

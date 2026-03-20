@@ -89,19 +89,38 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ ok: false, error: "Укажите userId." }, { status: 400 });
     }
 
-    const { data, error } = await getAdminClient()
-        .from("saved_calculations")
-        .select("id, kind, target_date, updated_at, pdf_url, file_name, result_text")
-        .eq("user_id", userId)
-        .order("updated_at", { ascending: false });
+    const [savedRes, queueRes] = await Promise.all([
+        getAdminClient()
+            .from("saved_calculations")
+            .select("id, kind, target_date, updated_at, pdf_url, file_name, result_text")
+            .eq("user_id", userId)
+            .order("updated_at", { ascending: false }),
+        getAdminClient()
+            .from("calculations")
+            .select("id, calc_type_id, status, updated_at")
+            .eq("user_id", userId)
+            .order("updated_at", { ascending: false }),
+    ]);
 
-    if (error) {
-        return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    if (savedRes.error) {
+        return NextResponse.json({ ok: false, error: savedRes.error.message }, { status: 500 });
     }
 
-    const calculations = (data ?? []).filter((calc) => isForecastKind(calc.kind));
+    if (queueRes.error) {
+        return NextResponse.json({ ok: false, error: queueRes.error.message }, { status: 500 });
+    }
 
-    return NextResponse.json({ ok: true, calculations });
+    const savedCalculations = (savedRes.data ?? []).filter((calc) => isForecastKind(calc.kind));
+    const queueCalculations = (queueRes.data ?? [])
+        .filter((calc) => isForecastKind(calc.calc_type_id))
+        .map((calc) => ({
+            id: calc.id,
+            kind: String(calc.calc_type_id || "").trim(),
+            status: calc.status ?? null,
+            updated_at: calc.updated_at ?? null,
+        }));
+
+    return NextResponse.json({ ok: true, savedCalculations, queueCalculations });
 }
 
 export async function POST(req: NextRequest) {
