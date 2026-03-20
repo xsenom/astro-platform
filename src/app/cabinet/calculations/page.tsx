@@ -1080,7 +1080,9 @@ export default function CalculationsPage() {
                         marginTop: 16,
                         display: "grid",
                         gap: 12,
-                        gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                        gridTemplateColumns:
+                            "repeat(auto-fit, minmax(min(100%, 280px), 340px))",
+                        justifyContent: "center",
                     }}
                 >
                     {products.map((product) => {
@@ -1094,6 +1096,9 @@ export default function CalculationsPage() {
                             <div
                                 key={product.code}
                                 style={{
+                                    width: "100%",
+                                    maxWidth: 340,
+                                    justifySelf: "center",
                                     padding: 16,
                                     borderRadius: 18,
                                     border: "1px solid rgba(224,197,143,.14)",
@@ -1104,18 +1109,26 @@ export default function CalculationsPage() {
                             >
                                 <div
                                     style={{
-                                        display: "flex",
-                                        justifyContent: "space-between",
-                                        gap: 8,
+                                        display: "grid",
+                                        gap: 12,
+                                        justifyItems: "center",
                                     }}
                                 >
-                                    <div style={{ fontWeight: 900, fontSize: 16 }}>
+                                    <div
+                                        style={{
+                                            width: "100%",
+                                            fontWeight: 900,
+                                            fontSize: 16,
+                                            textAlign: "left",
+                                        }}
+                                    >
                                         {product.title}
                                     </div>
 
                                     <div
                                         style={{
-                                            padding: "6px 10px",
+                                            minWidth: 88,
+                                            padding: "6px 18px",
                                             borderRadius: 999,
                                             fontSize: 12,
                                             fontWeight: 800,
@@ -1127,6 +1140,7 @@ export default function CalculationsPage() {
                                                     : "rgba(224,197,143,.10)",
                                             color: "rgba(245,240,233,.92)",
                                             whiteSpace: "nowrap",
+                                            textAlign: "center",
                                         }}
                                     >
                                         {product.is_free
