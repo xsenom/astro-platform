@@ -53,6 +53,16 @@ type CalculationRow = {
     updated_at: string | null;
 };
 
+type SavedCalculationOption = {
+    id: string;
+    kind: string;
+    target_date: string | null;
+    updated_at: string | null;
+    pdf_url: string | null;
+    file_name: string | null;
+    result_text: string;
+};
+
 type SupportThreadRow = {
     id: string;
     created_at: string;
@@ -684,6 +694,39 @@ export default function AdminPage() {
         }
     }
 
+    async function loadUserCalculations(userId: string) {
+        setEditorCalculationsLoading(true);
+
+        try {
+            const token = await getAccessToken();
+            if (!token) {
+                window.location.href = "/login";
+                return;
+            }
+
+            const res = await fetch(`/api/admin/user-calculations?userId=${encodeURIComponent(userId)}`, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
+
+            const json = await res.json().catch(() => null);
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || "Не удалось загрузить расчёты пользователя.");
+            }
+
+            const calculations = Array.isArray(json.calculations) ? (json.calculations as SavedCalculationOption[]) : [];
+            setEditorCalculations(calculations);
+            setEditorSelectedCalcId(calculations[0]?.id || "");
+        } catch (e) {
+            setEditorCalculations([]);
+            setEditorSelectedCalcId("");
+            setEditorError(e instanceof Error ? e.message : "Не удалось загрузить расчёты пользователя.");
+        } finally {
+            setEditorCalculationsLoading(false);
+        }
+    }
+
     function openUserEditor(profile: ProfileRow) {
         setEditorError(null);
         setEditorMessage(null);
@@ -697,6 +740,14 @@ export default function AdminPage() {
             birth_city: profile.birth_city || "",
         });
         setEditorOpen(true);
+        const userCalcs = calcs
+            .filter((calc) => calc.user_id === profile.id)
+            .sort((a, b) => {
+                const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+                const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+                return bTime - aTime;
+            });
+        setEditorSelectedCalcId(userCalcs[0]?.id || "");
     }
 
 
