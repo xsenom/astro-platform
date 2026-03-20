@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
+import { useCabinetLoading } from "@/components/cabinet/cabinetLoading";
 
 type CalcKind = "natal" | "day" | "week" | "month" | "big_calendar";
 
@@ -77,6 +78,7 @@ function cutText(text: string, limit = 500) {
 }
 
 export default function PurchasesPage() {
+    const { startLoading } = useCabinetLoading();
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [accesses, setAccesses] = useState<AccessRow[]>([]);
@@ -87,6 +89,7 @@ export default function PurchasesPage() {
     }, []);
 
     async function loadData() {
+        const doneLoading = startLoading({ message: "Загружаем покупки" });
         setLoading(true);
         setErr(null);
 
@@ -130,6 +133,7 @@ export default function PurchasesPage() {
             setSaved((savedResp.data ?? []) as SavedCalculationRow[]);
         } finally {
             setLoading(false);
+            doneLoading();
         }
     }
 

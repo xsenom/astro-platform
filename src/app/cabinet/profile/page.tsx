@@ -110,7 +110,7 @@ function isProfileFilled(p: ProfileRow | null) {
 }
 
 export default function ProfileDataPage() {
-    const { startLoading, stopLoading } = useCabinetLoading();
+    const { startLoading } = useCabinetLoading();
 
 
     const [loading, setLoading] = useState(true);
@@ -197,7 +197,7 @@ export default function ProfileDataPage() {
     }
 
     async function load() {
-        startLoading()
+        const doneLoading = startLoading({ message: "Загружаем данные профиля" });
         setLoading(true);
         setErr(null);
 
@@ -235,7 +235,7 @@ export default function ProfileDataPage() {
             await refreshAccess(p);
         } finally {
             setLoading(false);
-            stopLoading();
+            doneLoading();
         }
     }
 
@@ -248,7 +248,7 @@ export default function ProfileDataPage() {
         setErr(null);
 
         // если хочешь, чтобы при создании заказа тоже была луна — включаем:
-        startLoading()
+        const doneLoading = startLoading({ message: "Подготавливаем оплату профиля" });
         try {
             const { data: userData } = await supabase.auth.getUser();
             const user = userData.user;
@@ -283,7 +283,7 @@ export default function ProfileDataPage() {
 
             return (data as any).id as string;
         } finally {
-          stopLoading();
+          doneLoading();
         }
     }
 
@@ -307,7 +307,7 @@ export default function ProfileDataPage() {
         setErr(null);
 
         // ✅ пусть луна висит на сохранении тоже
-        startLoading();
+        const doneLoading = startLoading({ message: "Сохраняем данные профиля" });
 
         try {
             if (!canEdit) {
@@ -361,7 +361,7 @@ export default function ProfileDataPage() {
             await load();
         } finally {
             setSaving(false);
-            stopLoading();
+            doneLoading();
         }
     }
 
