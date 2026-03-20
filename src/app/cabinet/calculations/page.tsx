@@ -1135,42 +1135,51 @@ export default function CalculationsPage() {
                     <div
                         style={{
                             marginTop: 16,
-                            display: "grid",
-                            gap: 8,
-                            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                            padding: 12,
+                            borderRadius: 18,
+                            border: "1px solid rgba(224,197,143,.14)",
+                            background: "rgba(17,34,80,.16)",
                         }}
                     >
-                        {natalInterpretationSections.map((section) => {
-                            const active =
-                                section.title === (activeNatalInterpretationSection?.title ?? null);
+                        <div
+                            style={{
+                                display: "grid",
+                                gap: 8,
+                                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                            }}
+                        >
+                            {natalInterpretationSections.map((section) => {
+                                const active =
+                                    section.title === (activeNatalInterpretationSection?.title ?? null);
 
-                            return (
-                                <button
-                                    key={section.title}
-                                    onClick={() => setActiveNatalInterpretationTitle(section.title)}
-                                    style={{
-                                        textAlign: "left",
-                                        borderRadius: 16,
-                                        padding: "14px 16px",
-                                        border: active
-                                            ? "1px solid rgba(214,244,157,.38)"
-                                            : "1px solid rgba(214,244,157,.18)",
-                                        background: active
-                                            ? "linear-gradient(180deg, rgba(174,210,113,.28), rgba(124,159,75,.34))"
-                                            : "linear-gradient(180deg, rgba(174,210,113,.18), rgba(124,159,75,.24))",
-                                        color: "rgba(255,255,255,.96)",
-                                        fontWeight: 900,
-                                        cursor: "pointer",
-                                        lineHeight: 1.4,
-                                        boxShadow: active
-                                            ? "0 10px 30px rgba(109, 141, 56, .22)"
-                                            : "none",
-                                    }}
-                                >
-                                    {section.title}
-                                </button>
-                            );
-                        })}
+                                return (
+                                    <button
+                                        key={section.title}
+                                        onClick={() => setActiveNatalInterpretationTitle(section.title)}
+                                        style={{
+                                            textAlign: "left",
+                                            borderRadius: 16,
+                                            padding: "14px 16px",
+                                            border: active
+                                                ? "1px solid rgba(214,244,157,.38)"
+                                                : "1px solid rgba(214,244,157,.18)",
+                                            background: active
+                                                ? "linear-gradient(180deg, rgba(174,210,113,.28), rgba(124,159,75,.34))"
+                                                : "linear-gradient(180deg, rgba(174,210,113,.18), rgba(124,159,75,.24))",
+                                            color: "rgba(255,255,255,.96)",
+                                            fontWeight: 900,
+                                            cursor: "pointer",
+                                            lineHeight: 1.4,
+                                            boxShadow: active
+                                                ? "0 10px 30px rgba(109, 141, 56, .22)"
+                                                : "none",
+                                        }}
+                                    >
+                                        {section.title}
+                                    </button>
+                                );
+                            })}
+                        </div>
                     </div>
                 )}
             </div>
@@ -1475,6 +1484,15 @@ function extractMarkdownSections(text: string): MarkdownSection[] {
     const lines = text.split("\n");
     const sections: MarkdownSection[] = [];
     let current: MarkdownSection | null = null;
+    const natalFallbackTitles = [
+        "Общий разбор",
+        "Ключевой характер",
+        "Сильные стороны",
+        "Зоны роста",
+        "Отношения",
+        "Реализация",
+        "Короткий итог",
+    ];
 
     for (const rawLine of lines) {
         const line = rawLine.trim();
@@ -1493,6 +1511,46 @@ function extractMarkdownSections(text: string): MarkdownSection[] {
         }
 
         current.body.push(line);
+    }
+
+    if (sections.length <= 1) {
+        const fallbackSections: MarkdownSection[] = [];
+        let fallbackCurrent: MarkdownSection | null = null;
+
+        for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line) continue;
+
+            const normalizedLine = line
+                .replace(/^[-*]\s*/, "")
+                .replace(/\*\*/g, "")
+                .replace(/:+$/, "")
+                .trim();
+
+            const matchedTitle = natalFallbackTitles.find(
+                (title) =>
+                    normalizedLine === title ||
+                    normalizedLine.startsWith(`${title}:`) ||
+                    normalizedLine.startsWith(`${title} —`)
+            );
+
+            if (matchedTitle) {
+                fallbackCurrent = { title: matchedTitle, body: [] };
+                fallbackSections.push(fallbackCurrent);
+                continue;
+            }
+
+            if (!fallbackCurrent) {
+                fallbackCurrent = { title: "Общий разбор", body: [] };
+                fallbackSections.push(fallbackCurrent);
+            }
+
+            fallbackCurrent.body.push(line);
+        }
+
+        if (fallbackSections.length > 1) {
+            return fallbackSections;
+        }
     }
 
     return sections;
