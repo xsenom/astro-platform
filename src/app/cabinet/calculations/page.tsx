@@ -1071,11 +1071,7 @@ export default function CalculationsPage() {
 
                 </div>
 
-                {!result && !loading && (
-                    <div style={{ color: "rgba(245,240,233,.70)" }}>
-                        Выбери расчёт — результат появится здесь.
-                    </div>
-                )}
+
 
                 {loading && activeKind && (
                     <div

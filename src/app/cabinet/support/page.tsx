@@ -83,8 +83,9 @@ export default function SupportPage() {
     async function notifyTelegram(params: { thread_id: string; message_id: string }) {
         const token = await getAccessToken();
         if (!token) return;
+
         try {
-            await fetch("/api/support/telegram", {
+            const res = await fetch("/api/support/telegram", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -92,8 +93,27 @@ export default function SupportPage() {
                 },
                 body: JSON.stringify(params),
             });
-        } catch {
-            // ignore
+
+            const json = await res.json().catch(() => null);
+
+            if (!res.ok) {
+                console.error("notifyTelegram failed", {
+                    status: res.status,
+                    params,
+                    response: json,
+                });
+                setErr(
+                    json?.error
+                        ? `Не удалось отправить уведомление в Telegram: ${json.error}`
+                        : "Не удалось отправить уведомление в Telegram."
+                );
+                return;
+            }
+
+            console.log("notifyTelegram ok", json);
+        } catch (e) {
+            console.error("notifyTelegram request error", e);
+            setErr("Ошибка запроса при отправке уведомления в Telegram.");
         }
     }
 
@@ -118,6 +138,8 @@ export default function SupportPage() {
         return data.publicUrl ?? null;
     }
 
+
+
     async function loadUserAndThreads() {
         startLoading();
         setErr(null);
@@ -133,6 +155,7 @@ export default function SupportPage() {
             const { data, error } = await supabase
                 .from("support_threads")
                 .select("id, created_at, last_message_at, category, subject, status")
+                .eq("user_id", userData.user.id)
                 .order("last_message_at", { ascending: false });
 
             if (error) {
@@ -218,9 +241,11 @@ export default function SupportPage() {
         setCreating(true);
         setErr(null);
         startLoading();
+
         try {
             const { data: u } = await supabase.auth.getUser();
             const user = u.user;
+
             if (!user) {
                 window.location.href = "/login";
                 return;
@@ -240,11 +265,16 @@ export default function SupportPage() {
                 .single();
 
             if (tErr) {
+                console.error("support_threads insert error:", tErr);
                 setErr(tErr.message);
                 return;
             }
 
-            const threadId = (t as IdRow).id;
+            const threadId = (t as IdRow)?.id;
+            if (!threadId) {
+                setErr("Не удалось получить id обращения.");
+                return;
+            }
 
             // 2) upload attachment (optional)
             let attachmentUrl: string | null = null;
@@ -268,13 +298,18 @@ export default function SupportPage() {
                 .single();
 
             if (mErr) {
+                console.error("support_messages insert error:", mErr);
                 setErr(mErr.message);
                 return;
             }
 
-            const messageId = (m as IdRow).id;
+            const messageId = (m as IdRow)?.id;
+            if (!messageId) {
+                setErr("Не удалось получить id сообщения.");
+                return;
+            }
 
-            // 4) notify tg
+            // 4) notify telegram
             await notifyTelegram({ thread_id: threadId, message_id: messageId });
 
             setNewSubject("");
@@ -398,7 +433,7 @@ export default function SupportPage() {
                             <input
                                 value={newSubject}
                                 onChange={(e) => setNewSubject(e.target.value)}
-                                placeholder="Например: Оплата прошла, доступ не появился"
+                                placeholder="Тема обращения"
                                 style={{
                                     marginTop: 6,
                                     width: "100%",
@@ -417,7 +452,7 @@ export default function SupportPage() {
                                 value={newBody}
                                 onChange={(e) => setNewBody(e.target.value)}
                                 rows={4}
-                                placeholder="Опиши проблему и что ты уже пробовал(а)."
+                                placeholder="Опишите проблему."
                                 style={{
                                     marginTop: 6,
                                     width: "100%",
@@ -432,7 +467,7 @@ export default function SupportPage() {
                         </div>
 
                         <div>
-                            <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>Файл (опционально)</div>
+                            <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>Файл</div>
                             <input
                                 type="file"
                                 onChange={(e) => setNewFile(e.target.files?.[0] ?? null)}

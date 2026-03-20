@@ -97,7 +97,7 @@ export default function PurchasesPage() {
                         lineHeight: 1.55,
                     }}
                 >
-                    Здесь отображаются оплаченные доступы и сохранённые результаты расчётов.
+
                 </div>
             </div>
 

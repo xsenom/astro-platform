@@ -92,7 +92,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
                     <nav style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
                         {navItems.map((item) => {
-                            const active = pathname === item.href || (item.href !== "/cabinet" && pathname.startsWith(item.href));
+                            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
 
                             return (
                                 <a

@@ -309,6 +309,60 @@ function buildEmailText(builder: BuilderState) {
         .join("\n");
 }
 
+function formatBirthDateForInput(value?: string | null) {
+    if (!value) return "";
+
+    const trimmed = value.trim();
+
+    // Уже в формате dd.mm.yyyy
+    const ddmmyyyyMatch = trimmed.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    if (ddmmyyyyMatch) return trimmed;
+
+    // ISO yyyy-mm-dd
+    const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (isoMatch) {
+        const [, year, month, day] = isoMatch;
+        return `${day}.${month}.${year}`;
+    }
+
+    // ISO datetime
+    const isoDateTimeMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})T/);
+    if (isoDateTimeMatch) {
+        const [, year, month, day] = isoDateTimeMatch;
+        return `${day}.${month}.${year}`;
+    }
+
+    return trimmed;
+}
+
+function normalizeBirthDateInput(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+
+    const match = trimmed.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    if (!match) {
+        throw new Error("Дата рождения должна быть в формате ДД.ММ.ГГГГ");
+    }
+
+    const [, dayStr, monthStr, yearStr] = match;
+    const day = Number(dayStr);
+    const month = Number(monthStr);
+    const year = Number(yearStr);
+
+    const date = new Date(year, month - 1, day);
+
+    const isValid =
+        date.getFullYear() === year &&
+        date.getMonth() === month - 1 &&
+        date.getDate() === day;
+
+    if (!isValid) {
+        throw new Error("Дата рождения введена некорректно.");
+    }
+
+    return `${yearStr}-${monthStr}-${dayStr}`;
+}
+
 export default function AdminPage() {
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
@@ -400,15 +454,31 @@ export default function AdminPage() {
 
     const filteredThreads = useMemo(() => {
         const s = q.trim().toLowerCase();
-        if (!s) return threads;
-        return threads.filter(
-            (t) =>
-                t.id.toLowerCase().includes(s) ||
-                t.user_id.toLowerCase().includes(s) ||
-                (t.subject || "").toLowerCase().includes(s) ||
-                (t.category || "").toLowerCase().includes(s) ||
-                (t.status || "").toLowerCase().includes(s)
-        );
+
+        const base = !s
+            ? threads
+            : threads.filter(
+                (t) =>
+                    t.id.toLowerCase().includes(s) ||
+                    t.user_id.toLowerCase().includes(s) ||
+                    (t.subject || "").toLowerCase().includes(s) ||
+                    (t.category || "").toLowerCase().includes(s) ||
+                    (t.status || "").toLowerCase().includes(s)
+            );
+
+        return [...base].sort((a, b) => {
+            const aClosed = a.status === "closed";
+            const bClosed = b.status === "closed";
+
+            if (aClosed !== bClosed) {
+                return aClosed ? 1 : -1;
+            }
+
+            const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+            const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+
+            return bTime - aTime;
+        });
     }, [threads, q]);
 
     const activeThread = useMemo(
@@ -421,7 +491,43 @@ export default function AdminPage() {
             bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
         });
     }
+    async function closeThread() {
+        if (!activeThreadId) return;
 
+        setSupportSending(true);
+        setSupportErr(null);
+
+        try {
+            const token = await getAccessToken();
+            if (!token) {
+                window.location.href = "/login";
+                return;
+            }
+
+            const res = await fetch("/api/admin/support/close", {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    thread_id: activeThreadId,
+                }),
+            });
+
+            const json = await res.json().catch(() => null);
+
+            if (!res.ok || !json?.ok) {
+                setSupportErr(json?.error || "Не удалось закрыть обращение.");
+                return;
+            }
+
+            await loadSupportMessages(activeThreadId);
+            await loadSupportThreads();
+        } finally {
+            setSupportSending(false);
+        }
+    }
     function syncBuilderToMessage(nextState: BuilderState) {
         setBuilderState(nextState);
         if (builderMode === "builder") {
@@ -513,12 +619,13 @@ export default function AdminPage() {
             id: profile.id,
             email: profile.email || "",
             full_name: profile.full_name || "",
-            birth_date: profile.birth_date || "",
+            birth_date: formatBirthDateForInput(profile.birth_date),
             birth_time: profile.birth_time || "",
             birth_city: profile.birth_city || "",
         });
         setEditorOpen(true);
     }
+
 
     function closeUserEditor() {
         if (editorSaving || editorResetting) return;
@@ -542,6 +649,10 @@ export default function AdminPage() {
                 return;
             }
 
+            const normalizedBirthDate = editorState.birth_date.trim()
+                ? normalizeBirthDateInput(editorState.birth_date)
+                : null;
+
             const res = await fetch("/api/admin/users", {
                 method: "PATCH",
                 headers: {
@@ -552,9 +663,9 @@ export default function AdminPage() {
                     userId: editorState.id,
                     email: editorState.email,
                     full_name: editorState.full_name,
-                    birth_date: editorState.birth_date,
-                    birth_time: editorState.birth_time,
-                    birth_city: editorState.birth_city,
+                    birth_date: normalizedBirthDate,
+                    birth_time: editorState.birth_time.trim() || null,
+                    birth_city: editorState.birth_city.trim() || null,
                 }),
             });
 
@@ -564,15 +675,18 @@ export default function AdminPage() {
             }
 
             const profile = json.profile as ProfileRow;
+
             setProfiles((prev) => prev.map((item) => (item.id === profile.id ? profile : item)));
+
             setEditorState({
                 id: profile.id,
                 email: profile.email || "",
                 full_name: profile.full_name || "",
-                birth_date: profile.birth_date || "",
+                birth_date: formatBirthDateForInput(profile.birth_date),
                 birth_time: profile.birth_time || "",
                 birth_city: profile.birth_city || "",
             });
+
             setEditorMessage("Изменения сохранены.");
         } catch (e) {
             setEditorError(e instanceof Error ? e.message : "Не удалось сохранить пользователя.");
@@ -682,28 +796,45 @@ export default function AdminPage() {
         setSupportErr(null);
 
         try {
-            const { data, error } = await supabase
-                .from("support_threads")
-                .select("id, created_at, last_message_at, updated_at, user_id, category, subject, status")
-                .order("last_message_at", { ascending: false });
+            const token = await getAccessToken();
+            if (!token) {
+                window.location.href = "/login";
+                return;
+            }
 
-            if (error) throw error;
+            const res = await fetch("/api/admin/support", {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
 
-            const list = (data ?? []) as SupportThreadRow[];
+            const json = await res.json().catch(() => null);
+
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || "Не удалось загрузить обращения.");
+            }
+
+            const list = ((json.threads ?? []) as SupportThreadRow[]).sort((a, b) => {
+                const aClosed = a.status === "closed";
+                const bClosed = b.status === "closed";
+
+                if (aClosed !== bClosed) {
+                    return aClosed ? 1 : -1; // closed вниз
+                }
+
+                const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+                const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+
+                return bTime - aTime; // свежие выше
+            });
+
             setThreads(list);
 
             if ((!activeThreadId || !list.some((x) => x.id === activeThreadId)) && list[0]) {
                 setActiveThreadId(list[0].id);
             }
         } catch (e) {
-            const message = e instanceof Error ? e.message : "Не удалось загрузить обращения.";
-            if (message.toLowerCase().includes("stack depth limit exceeded")) {
-                setSupportErr(
-                    'Ошибка в БД таблицы support_threads: "stack depth limit exceeded". Обычно это рекурсивный trigger, RLS policy или view.'
-                );
-            } else {
-                setSupportErr(message);
-            }
+            setSupportErr(e instanceof Error ? e.message : "Не удалось загрузить обращения.");
         } finally {
             setSupportLoading(false);
             setSupportInitialized(true);
@@ -714,15 +845,25 @@ export default function AdminPage() {
         setSupportErr(null);
 
         try {
-            const { data, error } = await supabase
-                .from("support_messages")
-                .select("id, created_at, thread_id, author_user_id, author_admin_id, is_admin, message, attachment_url")
-                .eq("thread_id", threadId)
-                .order("created_at", { ascending: true });
+            const token = await getAccessToken();
+            if (!token) {
+                window.location.href = "/login";
+                return;
+            }
 
-            if (error) throw error;
+            const res = await fetch(`/api/admin/support?thread_id=${encodeURIComponent(threadId)}`, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
 
-            setMessages((data ?? []) as SupportMsgRow[]);
+            const json = await res.json().catch(() => null);
+
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || "Не удалось загрузить сообщения поддержки.");
+            }
+
+            setMessages((json.messages ?? []) as SupportMsgRow[]);
             setTimeout(scrollToBottom, 50);
         } catch (e) {
             setSupportErr(e instanceof Error ? e.message : "Не удалось загрузить сообщения поддержки.");
@@ -864,9 +1005,8 @@ export default function AdminPage() {
         setSupportErr(null);
 
         try {
-            const { data: userData } = await supabase.auth.getUser();
-            const user = userData.user;
-            if (!user) {
+            const token = await getAccessToken();
+            if (!token) {
                 window.location.href = "/login";
                 return;
             }
@@ -877,41 +1017,34 @@ export default function AdminPage() {
                 if (!attachmentUrl) return;
             }
 
-            const { data: message, error } = await supabase
-                .from("support_messages")
-                .insert({
+            const res = await fetch("/api/admin/support/reply", {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
                     thread_id: activeThreadId,
-                    author_user_id: null,
-                    author_admin_id: user.id,
-                    is_admin: true,
-                    message: body || (attachmentUrl ? "📎 Файл" : ""),
+                    message: body,
                     attachment_url: attachmentUrl,
-                })
-                .select("id")
-                .single();
+                }),
+            });
 
-            if (error) {
-                setSupportErr(error.message);
+            const json = await res.json().catch(() => null);
+
+            if (!res.ok || !json?.ok) {
+                setSupportErr(json?.error || "Не удалось отправить сообщение.");
                 return;
             }
 
-            const updateRes = await supabase
-                .from("support_threads")
-                .update({ status: "waiting_user" })
-                .eq("id", activeThreadId);
 
-            if (updateRes.error) {
-                setSupportErr(updateRes.error.message);
-            }
-
-            await notifyTelegram({
-                thread_id: activeThreadId,
-                message_id: (message as IdRow).id,
-            });
 
             setSupportText("");
             setSupportFile(null);
             if (fileInputRef.current) fileInputRef.current.value = "";
+
+            await loadSupportMessages(activeThreadId);
+            await loadSupportThreads();
             setTimeout(scrollToBottom, 10);
         } finally {
             setSupportSending(false);
@@ -1040,10 +1173,10 @@ export default function AdminPage() {
                         onChange={(e) => setQ(e.target.value)}
                         placeholder={
                             tab === "support"
-                                ? "Поиск… (thread/user/subject/category/status)"
+                                ? "Поиск"
                                 : tab === "orders"
-                                    ? "Поиск… (email / order_id / user_id / provider)"
-                                    : "Поиск… (email / id / user_id)"
+                                    ? "Поиск (email)"
+                                    : "Поиск (email)"
                         }
                         style={{
                             width: "min(520px, 100%)",
@@ -1077,6 +1210,23 @@ export default function AdminPage() {
                         }}
                     >
                         Обновить
+                    </button>
+                    <button
+                        onClick={() => void closeThread()}
+                        disabled={!activeThreadId || supportSending || !!supportErr}
+                        style={{
+                            borderRadius: 14,
+                            padding: "12px 14px",
+                            border: "1px solid rgba(255,110,90,.20)",
+                            background: "rgba(255,110,90,.10)",
+                            color: "rgba(245,240,233,.92)",
+                            fontWeight: 950,
+                            cursor: !activeThreadId || supportSending ? "default" : "pointer",
+                            opacity: !activeThreadId || supportSending || supportErr ? 0.75 : 1,
+                            whiteSpace: "nowrap",
+                        }}
+                    >
+                        Закрыть обращение
                     </button>
                 </div>
             </div>
@@ -1290,7 +1440,8 @@ export default function AdminPage() {
                                 <input
                                     value={editorState.birth_date}
                                     onChange={(e) => setEditorState((prev) => (prev ? { ...prev, birth_date: e.target.value } : prev))}
-                                    placeholder="YYYY-MM-DD"
+                                    placeholder="ДД.ММ.ГГГГ"
+                                    inputMode="numeric"
                                     style={editorInputStyle}
                                 />
                             </label>
@@ -1481,19 +1632,9 @@ export default function AdminPage() {
                                 );
                             })}
 
-                            <div
-                                style={{
-                                    padding: 12,
-                                    borderRadius: 14,
-                                    background: "rgba(10,18,38,.18)",
-                                    fontSize: 12,
-                                    color: "rgba(245,240,233,.72)",
-                                }}
-                            >
-                                Если после отправки снова увидишь <strong>stack depth limit exceeded</strong>, это почти наверняка
-                                проблема на стороне БД: рекурсивный trigger или policy для таблиц{" "}
-                                <strong>email_campaigns</strong> или <strong>email_campaign_recipients</strong>.
-                            </div>
+
+
+
                         </div>
                     </Card>
 
