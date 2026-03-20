@@ -143,6 +143,27 @@ const SEGMENT_ORDER: SegmentKey[] = [
     "all",
 ];
 
+
+const SUPPORT_CATEGORY_LABELS: Record<string, string> = {
+    payment: "Оплата / покупка",
+    calc: "Расчёт не пришёл / завис",
+    profile: "Профиль (дата/время/город)",
+    other: "Другое",
+};
+
+const SUPPORT_STATUS_LABELS: Record<string, string> = {
+    open: "Открыт",
+    closed: "Закрыт",
+};
+
+function getSupportCategoryLabel(category: string) {
+    return SUPPORT_CATEGORY_LABELS[category] ?? category;
+}
+
+function getSupportStatusLabel(status: string) {
+    return SUPPORT_STATUS_LABELS[status] ?? status;
+}
+
 const DEFAULT_BUILDER_STATE: BuilderState = {
     preheader: "Короткий анонс письма, который увидят в превью.",
     title: "Заголовок письма",
@@ -2043,9 +2064,9 @@ export default function AdminPage() {
                                                 cursor: "pointer",
                                             }}
                                         >
-                                            <div style={{ fontWeight: 950, fontSize: 13 }}>{t.subject || "Обращение"}</div>
+                                            <div style={{ fontWeight: 950, fontSize: 13, textDecoration: t.status === "closed" ? "line-through" : "none", opacity: t.status === "closed" ? 0.72 : 1 }}>{t.subject || "Обращение"}</div>
                                             <div style={{ marginTop: 6, fontSize: 12, color: "rgba(245,240,233,.70)" }}>
-                                                {t.category} • {t.status}
+                                                {getSupportCategoryLabel(t.category)} • {getSupportStatusLabel(t.status)}
                                             </div>
                                             <div style={{ marginTop: 6, fontSize: 12, color: "rgba(245,240,233,.55)" }}>
                                                 user_id: {t.user_id.slice(0, 8)}… • last:{" "}
@@ -2078,7 +2099,7 @@ export default function AdminPage() {
                             >
                                 <div style={{ color: "rgba(245,240,233,.70)", fontSize: 13 }}>
                                     {activeThread
-                                        ? `${activeThread.category} • ${activeThread.status} • user_id: ${activeThread.user_id}`
+                                        ? `${getSupportCategoryLabel(activeThread.category)} • ${getSupportStatusLabel(activeThread.status)} • user_id: ${activeThread.user_id}`
                                         : ""}
                                 </div>
 

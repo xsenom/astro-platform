@@ -35,6 +35,26 @@ const CATS = [
 
 type CatValue = (typeof CATS)[number]["v"];
 
+const CATEGORY_LABELS: Record<string, string> = {
+    payment: "Оплата / покупка",
+    calc: "Расчёт не пришёл / завис",
+    profile: "Профиль (дата/время/город)",
+    other: "Другое",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+    open: "Открыт",
+    closed: "Закрыт",
+};
+
+function getCategoryLabel(category: string) {
+    return CATEGORY_LABELS[category] ?? category;
+}
+
+function getStatusLabel(status: string) {
+    return STATUS_LABELS[status] ?? status;
+}
+
 async function getAccessToken(): Promise<string | null> {
     const { data } = await supabase.auth.getSession();
     return data.session?.access_token ?? null;
@@ -163,7 +183,16 @@ export default function SupportPage() {
                 return;
             }
 
-            const list = (data ?? []) as Thread[];
+            const list = ((data ?? []) as Thread[]).sort((a, b) => {
+                const aClosed = a.status === "closed";
+                const bClosed = b.status === "closed";
+
+                if (aClosed !== bClosed) return aClosed ? 1 : -1;
+
+                const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+                const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+                return bTime - aTime;
+            });
             setThreads(list);
             if (!activeThreadId && list[0]) setActiveThreadId(list[0].id);
         } finally {
@@ -518,9 +547,9 @@ export default function SupportPage() {
                                     cursor: "pointer",
                                 }}
                             >
-                                <div style={{ fontWeight: 950, fontSize: 13 }}>{t.subject || "Обращение"}</div>
+                                <div style={{ fontWeight: 950, fontSize: 13, textDecoration: t.status === "closed" ? "line-through" : "none", opacity: t.status === "closed" ? 0.72 : 1 }}>{t.subject || "Обращение"}</div>
                                 <div style={{ marginTop: 6, fontSize: 12, color: "rgba(245,240,233,.70)" }}>
-                                    {t.category} • {t.status}
+                                    {getCategoryLabel(t.category)} • {getStatusLabel(t.status)}
                                 </div>
                             </button>
                         );
@@ -550,7 +579,7 @@ export default function SupportPage() {
                         {activeThread ? activeThread.subject : "Выбери обращение"}
                     </div>
                     <div style={{ marginTop: 6, color: "rgba(245,240,233,.70)", fontSize: 13 }}>
-                        {activeThread ? `${activeThread.category} • ${activeThread.status}` : "Создай обращение слева"}
+                        {activeThread ? `${getCategoryLabel(activeThread.category)} • ${getStatusLabel(activeThread.status)}` : "Создай обращение слева"}
                     </div>
                     <div style={{ marginTop: 6, color: "rgba(245,240,233,.55)", fontSize: 12 }}>
                         {userEmail ? `Пользователь: ${userEmail}` : ""}
