@@ -433,8 +433,6 @@ export default function AdminPage() {
     const [editorMessage, setEditorMessage] = useState<string | null>(null);
     const [editorError, setEditorError] = useState<string | null>(null);
     const [editorState, setEditorState] = useState<UserEditorState | null>(null);
-    const [editorCalculations, setEditorCalculations] = useState<SavedCalculationOption[]>([]);
-    const [editorCalculationsLoading, setEditorCalculationsLoading] = useState(false);
     const [editorSelectedCalcId, setEditorSelectedCalcId] = useState<string>("");
     const [editorCalcSending, setEditorCalcSending] = useState(false);
     const [usersPagination, setUsersPagination] = useState<UsersPagination>({
@@ -543,6 +541,19 @@ export default function AdminPage() {
     const activeThread = useMemo(
         () => threads.find((t) => t.id === activeThreadId) ?? null,
         [threads, activeThreadId]
+    );
+    const editorAvailableCalcs = useMemo(
+        () =>
+            editorState
+                ? calcs
+                    .filter((calc) => calc.user_id === editorState.id)
+                    .sort((a, b) => {
+                        const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+                        const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+                        return bTime - aTime;
+                    })
+                : [],
+        [calcs, editorState]
     );
 
     function scrollToBottom() {
@@ -718,7 +729,14 @@ export default function AdminPage() {
             birth_city: profile.birth_city || "",
         });
         setEditorOpen(true);
-        void loadUserCalculations(profile.id);
+        const userCalcs = calcs
+            .filter((calc) => calc.user_id === profile.id)
+            .sort((a, b) => {
+                const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+                const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+                return bTime - aTime;
+            });
+        setEditorSelectedCalcId(userCalcs[0]?.id || "");
     }
 
 
@@ -728,7 +746,6 @@ export default function AdminPage() {
         setEditorError(null);
         setEditorMessage(null);
         setEditorState(null);
-        setEditorCalculations([]);
         setEditorSelectedCalcId("");
     }
 
@@ -806,26 +823,26 @@ export default function AdminPage() {
                 return;
             }
 
-            const res = await fetch("/api/admin/user-calculations", {
+            const res = await fetch("/api/admin/restart-calc", {
                 method: "POST",
                 headers: {
                     Authorization: `Bearer ${token}`,
                     "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                    userId: editorState.id,
-                    calcId: editorSelectedCalcId,
+                    calc_id: editorSelectedCalcId,
                 }),
             });
 
             const json = await res.json().catch(() => null);
             if (!res.ok || !json?.ok) {
-                throw new Error(json?.error || "Не удалось отправить расчёт на почту.");
+                throw new Error(json?.error || "Не удалось поставить расчёт в очередь.");
             }
 
-            setEditorMessage(json.message || "Расчёт отправлен на почту клиента.");
+            await loadSummary();
+            setEditorMessage("Расчёт поставлен в очередь. После обработки он автоматически уйдёт клиенту на почту.");
         } catch (e) {
-            setEditorError(e instanceof Error ? e.message : "Не удалось отправить расчёт на почту.");
+            setEditorError(e instanceof Error ? e.message : "Не удалось поставить расчёт в очередь.");
         } finally {
             setEditorCalcSending(false);
         }
@@ -1602,28 +1619,28 @@ export default function AdminPage() {
                                 <select
                                     value={editorSelectedCalcId}
                                     onChange={(e) => setEditorSelectedCalcId(e.target.value)}
-                                    disabled={editorCalculationsLoading || editorCalcSending || !editorCalculations.length}
+                                    disabled={editorCalcSending || !editorAvailableCalcs.length}
                                     style={editorInputStyle}
                                 >
-                                    {!editorCalculations.length ? (
+                                    {!editorAvailableCalcs.length ? (
                                         <option value="">
-                                            {editorCalculationsLoading ? "Загружаем расчёты..." : "Нет доступных расчётов"}
+                                            Нет доступных расчётов
                                         </option>
                                     ) : (
-                                        editorCalculations.map((calc) => (
+                                        editorAvailableCalcs.map((calc) => (
                                             <option key={calc.id} value={calc.id}>
-                                                {getCalculationLabel(calc.kind)}
-                                                {calc.target_date ? ` • ${calc.target_date}` : ""}
+                                                {getCalculationLabel(String(calc.calc_type_id || ""))}
                                                 {calc.updated_at ? ` • ${new Date(calc.updated_at).toLocaleDateString("ru-RU")}` : ""}
+                                                {calc.status ? ` • ${calc.status}` : ""}
                                             </option>
                                         ))
                                     )}
                                 </select>
                                 <button
                                     onClick={() => void sendSelectedCalculation()}
-                                    disabled={!editorSelectedCalcId || editorCalculationsLoading || editorCalcSending}
+                                    disabled={!editorSelectedCalcId || editorCalcSending}
                                     style={actionButtonStyle(
-                                        !editorSelectedCalcId || editorCalculationsLoading || editorCalcSending,
+                                        !editorSelectedCalcId || editorCalcSending,
                                         "rgba(147,197,114,.12)",
                                         "1px solid rgba(147,197,114,.24)"
                                     )}
