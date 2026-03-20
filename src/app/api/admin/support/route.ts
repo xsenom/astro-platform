@@ -114,7 +114,42 @@ export async function GET(req: Request) {
             return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
         }
 
-        return NextResponse.json({ ok: true, threads: data ?? [] });
+        const threads = data ?? [];
+        const userIds = [...new Set(threads.map((thread) => thread.user_id).filter(Boolean))];
+
+        let profilesById = new Map<string, { full_name: string | null; email: string | null }>();
+
+        if (userIds.length) {
+            const { data: profiles, error: profilesError } = await sb
+                .from("profiles")
+                .select("id, full_name, email")
+                .in("id", userIds);
+
+            if (profilesError) {
+                return NextResponse.json({ ok: false, error: profilesError.message }, { status: 500 });
+            }
+
+            profilesById = new Map(
+                (profiles ?? []).map((profile) => [
+                    profile.id,
+                    {
+                        full_name: profile.full_name ?? null,
+                        email: profile.email ?? null,
+                    },
+                ])
+            );
+        }
+
+        const enrichedThreads = threads.map((thread) => {
+            const profile = profilesById.get(thread.user_id);
+            return {
+                ...thread,
+                user_name: profile?.full_name ?? null,
+                user_email: profile?.email ?? null,
+            };
+        });
+
+        return NextResponse.json({ ok: true, threads: enrichedThreads });
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         return NextResponse.json({ ok: false, error: msg }, { status: 500 });

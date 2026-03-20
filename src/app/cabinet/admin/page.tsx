@@ -59,6 +59,8 @@ type SupportThreadRow = {
     last_message_at: string;
     updated_at: string | null;
     user_id: string;
+    user_name: string | null;
+    user_email: string | null;
     category: string;
     subject: string;
     status: string;
@@ -162,6 +164,16 @@ function getSupportCategoryLabel(category: string) {
 
 function getSupportStatusLabel(status: string) {
     return SUPPORT_STATUS_LABELS[status] ?? status;
+}
+
+function getSupportUserLabel(thread: Pick<SupportThreadRow, "user_name" | "user_email" | "user_id">) {
+    const name = thread.user_name?.trim();
+    const email = thread.user_email?.trim();
+
+    if (name && email) return `${name} • ${email}`;
+    if (name) return name;
+    if (email) return email;
+    return `ID: ${thread.user_id}`;
 }
 
 const DEFAULT_BUILDER_STATE: BuilderState = {
@@ -1232,23 +1244,6 @@ export default function AdminPage() {
                     >
                         Обновить
                     </button>
-                    <button
-                        onClick={() => void closeThread()}
-                        disabled={!activeThreadId || supportSending || !!supportErr}
-                        style={{
-                            borderRadius: 14,
-                            padding: "12px 14px",
-                            border: "1px solid rgba(255,110,90,.20)",
-                            background: "rgba(255,110,90,.10)",
-                            color: "rgba(245,240,233,.92)",
-                            fontWeight: 950,
-                            cursor: !activeThreadId || supportSending ? "default" : "pointer",
-                            opacity: !activeThreadId || supportSending || supportErr ? 0.75 : 1,
-                            whiteSpace: "nowrap",
-                        }}
-                    >
-                        Закрыть обращение
-                    </button>
                 </div>
             </div>
 
@@ -2069,7 +2064,7 @@ export default function AdminPage() {
                                                 {getSupportCategoryLabel(t.category)} • {getSupportStatusLabel(t.status)}
                                             </div>
                                             <div style={{ marginTop: 6, fontSize: 12, color: "rgba(245,240,233,.55)" }}>
-                                                user_id: {t.user_id.slice(0, 8)}… • last:{" "}
+                                                {getSupportUserLabel(t)} • последнее сообщение:{" "}
                                                 {t.last_message_at ? new Date(t.last_message_at).toLocaleString() : "—"}
                                             </div>
                                         </button>
@@ -2097,10 +2092,46 @@ export default function AdminPage() {
                                     minHeight: "62vh",
                                 }}
                             >
-                                <div style={{ color: "rgba(245,240,233,.70)", fontSize: 13 }}>
-                                    {activeThread
-                                        ? `${getSupportCategoryLabel(activeThread.category)} • ${getSupportStatusLabel(activeThread.status)} • user_id: ${activeThread.user_id}`
-                                        : ""}
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "space-between",
+                                        gap: 12,
+                                        flexWrap: "wrap",
+                                    }}
+                                >
+                                    <div style={{ color: "rgba(245,240,233,.70)", fontSize: 13 }}>
+                                        {activeThread
+                                            ? `${getSupportCategoryLabel(activeThread.category)} • ${getSupportStatusLabel(activeThread.status)} • ${getSupportUserLabel(activeThread)}`
+                                            : ""}
+                                    </div>
+
+                                    {activeThread && (
+                                        <button
+                                            onClick={() => void closeThread()}
+                                            disabled={supportSending || !!supportErr || activeThread.status === "closed"}
+                                            style={{
+                                                borderRadius: 14,
+                                                padding: "10px 12px",
+                                                border: "1px solid rgba(255,110,90,.20)",
+                                                background: "rgba(255,110,90,.10)",
+                                                color: "rgba(245,240,233,.92)",
+                                                fontWeight: 950,
+                                                cursor:
+                                                    supportSending || activeThread.status === "closed"
+                                                        ? "default"
+                                                        : "pointer",
+                                                opacity:
+                                                    supportSending || supportErr || activeThread.status === "closed"
+                                                        ? 0.75
+                                                        : 1,
+                                                whiteSpace: "nowrap",
+                                            }}
+                                        >
+                                            {activeThread.status === "closed" ? "Обращение закрыто" : "Закрыть обращение"}
+                                        </button>
+                                    )}
                                 </div>
 
                                 <div
