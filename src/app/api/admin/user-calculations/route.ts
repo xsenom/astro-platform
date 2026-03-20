@@ -97,7 +97,7 @@ export async function GET(req: NextRequest) {
             .order("updated_at", { ascending: false }),
         getAdminClient()
             .from("calculations")
-            .select("id, calc_type_id, status, updated_at")
+            .select("id, calc_type, status, updated_at")
             .eq("user_id", userId)
             .order("updated_at", { ascending: false }),
     ]);
@@ -112,10 +112,10 @@ export async function GET(req: NextRequest) {
 
     const savedCalculations = (savedRes.data ?? []).filter((calc) => isForecastKind(calc.kind));
     const queueCalculations = (queueRes.data ?? [])
-        .filter((calc) => isForecastKind(calc.calc_type_id))
+        .filter((calc) => isForecastKind(calc.calc_type))
         .map((calc) => ({
             id: calc.id,
-            kind: String(calc.calc_type_id || "").trim(),
+            kind: String(calc.calc_type || "").trim(),
             status: calc.status ?? null,
             updated_at: calc.updated_at ?? null,
         }));

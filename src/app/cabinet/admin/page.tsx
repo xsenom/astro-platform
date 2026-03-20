@@ -47,7 +47,7 @@ type OrderRow = {
 type CalculationRow = {
     id: string;
     user_id: string;
-    calc_type_id?: string | null;
+    calc_type?: string | null;
     status: string | null;
     created_at: string | null;
     updated_at: string | null;
@@ -515,7 +515,7 @@ export default function AdminPage() {
             (c) =>
                 c.id.toLowerCase().includes(s) ||
                 c.user_id.toLowerCase().includes(s) ||
-                String(c.calc_type_id || "").toLowerCase().includes(s) ||
+                String(c.calc_type || "").toLowerCase().includes(s) ||
                 (c.status || "").toLowerCase().includes(s)
         );
     }, [calcs, q]);
@@ -1813,7 +1813,7 @@ export default function AdminPage() {
                         <GridRow key={c.id} cols="170px 170px 160px 140px 160px">
                             <Mono>{c.id.slice(0, 8)}…</Mono>
                             <Mono>{c.user_id.slice(0, 8)}…</Mono>
-                            <Mono>{String(c.calc_type_id || "—")}</Mono>
+                            <Mono>{String(c.calc_type || "—")}</Mono>
                             <Badge>{c.status || "—"}</Badge>
                             <button
                                 onClick={() => void restartCalc(c.id)}
