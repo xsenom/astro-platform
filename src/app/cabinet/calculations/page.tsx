@@ -57,6 +57,11 @@ type InterpretationState = {
     model: string | null;
 };
 
+type MarkdownSection = {
+    title: string;
+    body: string[];
+};
+
 function pad2(n: number) {
     return String(n).padStart(2, "0");
 }
@@ -1022,7 +1027,10 @@ export default function CalculationsPage() {
     }
 
     const showNatalResultBlock =
-        (loading && activeKind === "natal") || (result?.kind === "natal");
+        (loading && activeKind === "natal") || result?.kind === "natal";
+
+    const regularProducts = products.filter((p) => p.code !== "big_calendar");
+    const bigCalendarProduct = products.find((p) => p.code === "big_calendar") ?? null;
 
     return (
         <div style={{ display: "grid", gap: 16 }}>
@@ -1075,128 +1083,168 @@ export default function CalculationsPage() {
                     </div>
                 )}
 
-                <div
-                    style={{
-                        marginTop: 16,
-                        display: "grid",
-                        gap: 12,
-                        gridTemplateColumns:
-                            "repeat(auto-fit, minmax(min(100%, 280px), 340px))",
-                        justifyContent: "center",
-                    }}
-                >
-                    {products.map((product) => {
-                        const purchased = isPurchased(product.code);
-                        const hasSaved =
-                            product.code === "day"
-                                ? !!savedMap.day && savedMap.day.target_date === targetDate
-                                : !!savedMap[product.code];
+                {regularProducts.length > 0 && (
+                    <div
+                        style={{
+                            marginTop: 16,
+                            display: "grid",
+                            gap: 12,
+                            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                            alignItems: "stretch",
+                        }}
+                    >
+                        {regularProducts.map((product) => {
+                            const purchased = isPurchased(product.code);
+                            const hasSaved =
+                                product.code === "day"
+                                    ? !!savedMap.day && savedMap.day.target_date === targetDate
+                                    : !!savedMap[product.code];
 
-                        return (
-                            <div
-                                key={product.code}
-                                style={{
-                                    width: "100%",
-                                    maxWidth: 340,
-                                    justifySelf: "center",
-                                    padding: 16,
-                                    borderRadius: 18,
-                                    border: "1px solid rgba(224,197,143,.14)",
-                                    background: "rgba(10,18,38,.18)",
-                                    display: "grid",
-                                    gap: 10,
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        display: "grid",
-                                        gap: 12,
-                                        justifyItems: "center",
-                                    }}
-                                >
-                                    <div
-                                        style={{
-                                            width: "100%",
-                                            fontWeight: 900,
-                                            fontSize: 16,
-                                            textAlign: "left",
-                                        }}
-                                    >
-                                        {product.title}
-                                    </div>
+                            return (
+                                <div key={product.code} style={productCardStyle()}>
+                                    <div style={cardTopRowStyle}>
+                                        <div style={cardTitleStyle}>
+                                            {product.title}
+                                        </div>
 
-                                    <div
-                                        style={{
-                                            minWidth: 88,
-                                            padding: "6px 18px",
-                                            borderRadius: 999,
-                                            fontSize: 12,
-                                            fontWeight: 800,
-                                            border: "1px solid rgba(224,197,143,.18)",
-                                            background: product.is_free
-                                                ? "rgba(90,220,150,.12)"
+                                        <div
+                                            style={topBadgeStyle(
+                                                product.is_free
+                                                    ? "free"
+                                                    : purchased
+                                                        ? "bought"
+                                                        : "price"
+                                            )}
+                                        >
+                                            {product.is_free
+                                                ? "Бесплатно"
                                                 : purchased
-                                                    ? "rgba(110,170,255,.14)"
-                                                    : "rgba(224,197,143,.10)",
-                                            color: "rgba(245,240,233,.92)",
-                                            whiteSpace: "nowrap",
-                                            textAlign: "center",
+                                                    ? "Куплено"
+                                                    : `${product.price_rub} ₽`}
+                                        </div>
+                                    </div>
+
+                                    <div style={cardDescriptionStyle}>
+                                        {product.description ||
+                                            "Описание скоро будет добавлено"}
+                                    </div>
+
+                                    <div style={cardTagsRowStyle}>
+                                        {hasSaved && (
+                                            <div style={tagStyle("rgba(90,220,150,.12)")}>
+                                                Сохранено
+                                            </div>
+                                        )}
+                                        {!product.is_free && purchased && (
+                                            <div style={tagStyle("rgba(110,170,255,.14)")}>
+                                                Доступ открыт
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <button
+                                        disabled={!canRun || profileLoading || loading}
+                                        onClick={() => handleAction(product.code)}
+                                        style={{ ...btn(), width: "100%", marginTop: "auto" }}
+                                    >
+                                        {loading && activeKind === product.code
+                                            ? "Выполняется…"
+                                            : product.is_free || purchased
+                                                ? hasSaved
+                                                    ? "Открыть результат"
+                                                    : "Выполнить расчёт"
+                                                : `Купить за ${product.price_rub} ₽`}
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {bigCalendarProduct && (
+                    <div
+                        style={{
+                            marginTop: 12,
+                            display: "flex",
+                            justifyContent: "center",
+                        }}
+                    >
+                        {(() => {
+                            const product = bigCalendarProduct;
+                            const purchased = isPurchased(product.code);
+                            const hasSaved = !!savedMap[product.code];
+
+                            return (
+                                <div
+                                    style={{
+                                        ...bigCalendarCardStyle,
+                                        width: "100%",
+                                        maxWidth: 680,
+                                    }}
+                                >
+                                    <div style={bigCalendarTopRowStyle}>
+                                        <div style={bigCalendarTitleStyle}>
+                                            {product.title}
+                                        </div>
+
+                                        <div
+                                            style={topBadgeStyle(
+                                                product.is_free
+                                                    ? "free"
+                                                    : purchased
+                                                        ? "bought"
+                                                        : "price"
+                                            )}
+                                        >
+                                            {product.is_free
+                                                ? "Бесплатно"
+                                                : purchased
+                                                    ? "Куплено"
+                                                    : `${product.price_rub} ₽`}
+                                        </div>
+                                    </div>
+
+                                    <div style={bigCalendarDescriptionStyle}>
+                                        {product.description ||
+                                            "Описание скоро будет добавлено"}
+                                    </div>
+
+                                    <div style={bigCalendarTagsRowStyle}>
+                                        {hasSaved && (
+                                            <div style={tagStyle("rgba(90,220,150,.12)")}>
+                                                Сохранено
+                                            </div>
+                                        )}
+                                        {!product.is_free && purchased && (
+                                            <div style={tagStyle("rgba(110,170,255,.14)")}>
+                                                Доступ открыт
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <button
+                                        disabled={!canRun || profileLoading || loading}
+                                        onClick={() => handleAction(product.code)}
+                                        style={{
+                                            ...btn(),
+                                            minWidth: 240,
+                                            alignSelf: "center",
+                                            marginTop: "auto",
                                         }}
                                     >
-                                        {product.is_free
-                                            ? "Бесплатно"
-                                            : purchased
-                                                ? "Куплено"
-                                                : `${product.price_rub} ₽`}
-                                    </div>
+                                        {loading && activeKind === product.code
+                                            ? "Выполняется…"
+                                            : product.is_free || purchased
+                                                ? hasSaved
+                                                    ? "Открыть результат"
+                                                    : "Выполнить расчёт"
+                                                : `Купить за ${product.price_rub} ₽`}
+                                    </button>
                                 </div>
-
-                                <div
-                                    style={{
-                                        color: "rgba(245,240,233,.72)",
-                                        lineHeight: 1.5,
-                                        minHeight: 44,
-                                    }}
-                                >
-                                    {product.description || "Описание скоро будет добавлено"}
-                                </div>
-
-                                <div
-                                    style={{
-                                        display: "flex",
-                                        gap: 8,
-                                        flexWrap: "wrap",
-                                    }}
-                                >
-                                    {hasSaved && (
-                                        <div style={tagStyle("rgba(90,220,150,.12)")}>
-                                            Сохранено
-                                        </div>
-                                    )}
-                                    {!product.is_free && purchased && (
-                                        <div style={tagStyle("rgba(110,170,255,.14)")}>
-                                            Доступ открыт
-                                        </div>
-                                    )}
-                                </div>
-
-                                <button
-                                    disabled={!canRun || profileLoading || loading}
-                                    onClick={() => handleAction(product.code)}
-                                    style={btn()}
-                                >
-                                    {loading && activeKind === product.code
-                                        ? "Выполняется…"
-                                        : product.is_free || purchased
-                                            ? hasSaved
-                                                ? "Открыть результат"
-                                                : "Выполнить расчёт"
-                                            : `Купить за ${product.price_rub} ₽`}
-                                </button>
-                            </div>
-                        );
-                    })}
-                </div>
+                            );
+                        })()}
+                    </div>
+                )}
 
                 {result && !loading && (
                     <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
@@ -1358,9 +1406,9 @@ export default function CalculationsPage() {
                             marginBottom: 12,
                         }}
                     >
-                        <div style={{ fontSize: 16, fontWeight: 950 }}>Натальная карта</div>
-
-
+                        <div style={{ fontSize: 16, fontWeight: 950 }}>
+                            Натальная карта
+                        </div>
                     </div>
 
                     {loading && activeKind === "natal" && (
@@ -1397,6 +1445,124 @@ export default function CalculationsPage() {
             )}
         </div>
     );
+}
+
+const cardTopRowStyle: CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    gap: 10,
+    alignItems: "start",
+};
+
+const cardTitleStyle: CSSProperties = {
+    fontWeight: 900,
+    fontSize: 16,
+    lineHeight: 1.25,
+    minHeight: 40,
+};
+
+const cardDescriptionStyle: CSSProperties = {
+    color: "rgba(245,240,233,.72)",
+    lineHeight: 1.5,
+    minHeight: 72,
+};
+
+const cardTagsRowStyle: CSSProperties = {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    alignItems: "center",
+    minHeight: 36,
+    marginBottom: 12,
+};
+
+function productCardStyle(): CSSProperties {
+    return {
+        padding: 16,
+        borderRadius: 18,
+        border: "1px solid rgba(224,197,143,.14)",
+        background: "rgba(10,18,38,.18)",
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 266,
+    };
+}
+
+const bigCalendarCardStyle: CSSProperties = {
+    padding: 20,
+    borderRadius: 20,
+    border: "1px solid rgba(224,197,143,.18)",
+    background: "linear-gradient(180deg, rgba(20,35,75,.26), rgba(10,18,38,.22))",
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 244,
+};
+
+const bigCalendarTopRowStyle: CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "1fr auto",
+    gap: 12,
+    alignItems: "start",
+};
+
+const bigCalendarTitleStyle: CSSProperties = {
+    fontWeight: 900,
+    fontSize: 18,
+    lineHeight: 1.25,
+    textAlign: "center",
+    minHeight: 40,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingLeft: 44,
+};
+
+const bigCalendarDescriptionStyle: CSSProperties = {
+    color: "rgba(245,240,233,.72)",
+    lineHeight: 1.5,
+    minHeight: 62,
+    textAlign: "center",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+};
+
+const bigCalendarTagsRowStyle: CSSProperties = {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 36,
+    marginBottom: 12,
+};
+
+function topBadgeStyle(mode: "free" | "bought" | "price"): CSSProperties {
+    const background =
+        mode === "free"
+            ? "rgba(90,220,150,.12)"
+            : mode === "bought"
+                ? "rgba(110,170,255,.14)"
+                : "rgba(224,197,143,.10)";
+
+    return {
+        minWidth: 114,
+        height: 34,
+        padding: "0 12px",
+        borderRadius: 999,
+        fontSize: 12,
+        fontWeight: 800,
+        border: "1px solid rgba(224,197,143,.18)",
+        background,
+        color: "rgba(245,240,233,.92)",
+        whiteSpace: "nowrap",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        lineHeight: 1,
+        flexShrink: 0,
+    };
 }
 
 function AnimatedDots() {
@@ -1594,32 +1760,36 @@ function AstroLoading() {
 
 function tagStyle(bg: string): CSSProperties {
     return {
-        padding: "6px 10px",
+        minWidth: 116,
+        height: 28,
+        padding: "0 10px",
         borderRadius: 999,
         fontSize: 12,
         fontWeight: 800,
         border: "1px solid rgba(224,197,143,.18)",
         background: bg,
         color: "rgba(245,240,233,.92)",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        lineHeight: 1,
+        whiteSpace: "nowrap",
     };
 }
 
 function btn(): CSSProperties {
     return {
         borderRadius: 14,
-        padding: "11px 13px",
+        padding: "13px 16px",
         border: "1px solid rgba(224,197,143,.18)",
         background: "rgba(224,197,143,.10)",
         color: "rgba(245,240,233,.92)",
         fontWeight: 950,
         cursor: "pointer",
+        textAlign: "center",
     };
 }
-
-type MarkdownSection = {
-    title: string;
-    body: string[];
-};
 
 function NatalResultView({ text }: { text: string }) {
     const lines = text
