@@ -12,22 +12,21 @@ export default function MoonRouteTransition({ show }: Props) {
     return (
         <>
             <style>{`
-        @keyframes moonOverlayFade {
-          0%   { opacity: 0; }
-          10%  { opacity: 1; }
-          90%  { opacity: 1; }
-          100% { opacity: 0; }
+        @keyframes moonOverlayPulse {
+          0%   { opacity: .92; }
+          50%  { opacity: 1; }
+          100% { opacity: .92; }
         }
         @keyframes moonPop {
           0%   { transform: translateY(18px) scale(0.96); opacity: 0; }
           18%  { opacity: 1; }
           55%  { transform: translateY(0px) scale(1.00); opacity: 1; }
-          100% { transform: translateY(-6px) scale(1.02); opacity: 0; }
+          100% { transform: translateY(0px) scale(1.00); opacity: 1; }
         }
         @keyframes moonSheen {
           0%   { opacity: 0; transform: translateX(-18px); }
           25%  { opacity: .35; }
-          100% { opacity: 0; transform: translateX(18px); }
+          100% { opacity: .12; transform: translateX(18px); }
         }
       `}</style>
 
@@ -40,7 +39,7 @@ export default function MoonRouteTransition({ show }: Props) {
                     pointerEvents: "none",
                     display: "grid",
                     placeItems: "center",
-                    animation: "moonOverlayFade 1.2s ease forwards",
+                    animation: "moonOverlayPulse 2.2s ease-in-out infinite",
                     background:
                         "radial-gradient(1200px 600px at 50% 35%, rgba(10,18,38,.30), rgba(10,18,38,.62))",
                     backdropFilter: "blur(6px)",
@@ -88,7 +87,7 @@ function Moon({
                 background: `radial-gradient(circle at 32% 28%, rgba(255,255,255,.20), ${base} 55%, rgba(0,0,0,.20) 100%)`,
                 border: `1px solid rgba(224,197,143,.10)`,
                 boxShadow: `0 0 0 1px rgba(255,255,255,.02) inset, 0 18px 60px ${glow}`,
-                animation: "moonPop 1.15s cubic-bezier(.2,.9,.2,1) forwards",
+                animation: "moonPop 1.65s cubic-bezier(.2,.9,.2,1) infinite alternate",
                 animationDelay: `${delayMs}ms`,
                 opacity: 0,
                 overflow: "hidden",
@@ -129,7 +128,7 @@ function Moon({
                     height: "100%",
                     left: "20%",
                     opacity: 0,
-                    animation: "moonSheen 1.15s ease forwards",
+                    animation: "moonSheen 1.85s ease-in-out infinite alternate",
                     animationDelay: `${delayMs + 120}ms`,
                     mixBlendMode: "screen",
                 }}
