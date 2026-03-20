@@ -1,6 +1,35 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+
+type SexOption = "female" | "male";
+type GoalOption = "lose" | "maintain" | "gain";
+type ActivityOption = "low" | "medium" | "high";
+
+type BjuApiResponse = {
+    calories?: number | string | null;
+    kcal?: number | string | null;
+    protein?: number | string | null;
+    proteins?: number | string | null;
+    fat?: number | string | null;
+    fats?: number | string | null;
+    carb?: number | string | null;
+    carbs?: number | string | null;
+    carbohydrates?: number | string | null;
+    water?: number | string | null;
+    bmi?: number | string | null;
+    meta?: Record<string, unknown> | null;
+};
+
+type BjuResult = {
+    calories: number | null;
+    protein: number | null;
+    fat: number | null;
+    carbs: number | null;
+    water: number | null;
+    bmi: number | null;
+    raw: BjuApiResponse | null;
+};
 import { supabase } from "@/lib/supabase/client";
 import { useCabinetLoading } from "@/components/cabinet/cabinetLoading";
 
@@ -17,6 +46,62 @@ type ProfileRow = {
 function toHHMM(v: string | null) {
     if (!v) return "";
     return v.slice(0, 5);
+}
+
+
+function getAgeFromBirthDate(value: string) {
+    if (!value) return null;
+    const birth = new Date(`${value}T00:00:00`);
+    if (Number.isNaN(birth.getTime())) return null;
+
+    const now = new Date();
+    let age = now.getFullYear() - birth.getFullYear();
+    const hasBirthdayPassed =
+        now.getMonth() > birth.getMonth() ||
+        (now.getMonth() === birth.getMonth() && now.getDate() >= birth.getDate());
+
+    if (!hasBirthdayPassed) age -= 1;
+    return age > 0 ? age : null;
+}
+
+function toNumber(value: unknown) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+        const normalized = value.replace(",", ".").trim();
+        const parsed = Number.parseFloat(normalized);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function pickFirstNumber(...values: unknown[]) {
+    for (const value of values) {
+        const parsed = toNumber(value);
+        if (parsed !== null) return parsed;
+    }
+    return null;
+}
+
+function normalizeBjuResponse(payload: BjuApiResponse | null): BjuResult {
+    return {
+        calories: pickFirstNumber(payload?.calories, payload?.kcal),
+        protein: pickFirstNumber(payload?.protein, payload?.proteins),
+        fat: pickFirstNumber(payload?.fat, payload?.fats),
+        carbs: pickFirstNumber(payload?.carb, payload?.carbs, payload?.carbohydrates),
+        water: pickFirstNumber(payload?.water),
+        bmi: pickFirstNumber(payload?.bmi),
+        raw: payload,
+    };
+}
+
+function getBjuEndpoint() {
+    const directUrl = process.env.NEXT_PUBLIC_BJU_API_URL?.trim();
+    if (directUrl) return directUrl;
+
+    const baseUrl = process.env.NEXT_PUBLIC_BJU_API_BASE?.trim();
+    if (!baseUrl) return null;
+
+    return `${baseUrl.replace(/\/$/, "")}/bju/calculate`;
 }
 
 function isProfileFilled(p: ProfileRow | null) {
@@ -40,11 +125,23 @@ export default function ProfileDataPage() {
     const [birthCity, setBirthCity] = useState("");
     const [saving, setSaving] = useState(false);
 
+    const [bjuSex, setBjuSex] = useState<SexOption>("female");
+    const [bjuHeight, setBjuHeight] = useState("170");
+    const [bjuWeight, setBjuWeight] = useState("");
+    const [bjuAge, setBjuAge] = useState("");
+    const [bjuGoal, setBjuGoal] = useState<GoalOption>("maintain");
+    const [bjuActivity, setBjuActivity] = useState<ActivityOption>("medium");
+    const [bjuLoading, setBjuLoading] = useState(false);
+    const [bjuError, setBjuError] = useState<string | null>(null);
+    const [bjuResult, setBjuResult] = useState<BjuResult | null>(null);
+
     const [canEdit, setCanEdit] = useState(true);
     const [needPay, setNeedPay] = useState(false);
     const [usableOrderId, setUsableOrderId] = useState<string | null>(null);
 
     const filled = useMemo(() => isProfileFilled(profile), [profile]);
+
+    const bjuEndpoint = useMemo(() => getBjuEndpoint(), []);
 
     async function getUsablePaidOrder(kind: "profile_update" | "add_person") {
         const { data: userData } = await supabase.auth.getUser();
@@ -132,6 +229,7 @@ export default function ProfileDataPage() {
                 setBirthDate(p.birth_date ?? "");
                 setBirthTime(toHHMM(p.birth_time));
                 setBirthCity(p.birth_city ?? "");
+                setBjuAge(String(getAgeFromBirthDate(p.birth_date ?? "") ?? ""));
             }
 
             await refreshAccess(p);
@@ -264,6 +362,71 @@ export default function ProfileDataPage() {
         } finally {
             setSaving(false);
             stopLoading();
+        }
+    }
+
+
+    async function calculateBju() {
+        setBjuLoading(true);
+        setBjuError(null);
+
+        try {
+            if (!bjuEndpoint) {
+                throw new Error("Не задан NEXT_PUBLIC_BJU_API_URL или NEXT_PUBLIC_BJU_API_BASE.");
+            }
+
+            const age = Number.parseInt(bjuAge, 10);
+            const height = Number.parseFloat(bjuHeight.replace(",", "."));
+            const weight = Number.parseFloat(bjuWeight.replace(",", "."));
+
+            if (!Number.isFinite(age) || age <= 0) {
+                throw new Error("Укажи корректный возраст.");
+            }
+            if (!Number.isFinite(height) || height <= 0) {
+                throw new Error("Укажи корректный рост в сантиметрах.");
+            }
+            if (!Number.isFinite(weight) || weight <= 0) {
+                throw new Error("Укажи корректный вес в килограммах.");
+            }
+
+            const payload = {
+                sex: bjuSex,
+                gender: bjuSex,
+                age,
+                height,
+                height_cm: height,
+                weight,
+                weight_kg: weight,
+                goal: bjuGoal,
+                target: bjuGoal,
+                activity: bjuActivity,
+                activity_level: bjuActivity,
+            };
+
+            const res = await fetch(bjuEndpoint, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            });
+
+            const json = (await res.json().catch(() => null)) as BjuApiResponse | null;
+
+            if (!res.ok) {
+                const message =
+                    (json as { detail?: string; message?: string } | null)?.detail ||
+                    (json as { detail?: string; message?: string } | null)?.message ||
+                    `HTTP ${res.status}`;
+                throw new Error(message);
+            }
+
+            setBjuResult(normalizeBjuResponse(json));
+        } catch (error) {
+            setBjuResult(null);
+            setBjuError(error instanceof Error ? error.message : "Не удалось рассчитать БЖУ.");
+        } finally {
+            setBjuLoading(false);
         }
     }
 
@@ -478,6 +641,128 @@ export default function ProfileDataPage() {
                     )}
                 </div>
             </div>
+
+
+            <div
+                style={{
+                    padding: 18,
+                    borderRadius: 22,
+                    border: "1px solid rgba(224,197,143,.14)",
+                    background: "rgba(17,34,80,.16)",
+                }}
+            >
+                <div style={{ fontSize: 18, fontWeight: 950 }}>Расчёт БЖУ</div>
+                <div style={{ marginTop: 6, color: "rgba(245,240,233,.75)", lineHeight: 1.5 }}>
+                    Блок теперь считает БЖУ через внешнюю ручку без изменений FastAPI-бэка.
+                    Укажи URL в <code>NEXT_PUBLIC_BJU_API_URL</code> или базовый адрес в <code>NEXT_PUBLIC_BJU_API_BASE</code>.
+                </div>
+
+                <div style={{ marginTop: 12, display: "grid", gap: 12, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                    <div>
+                        <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>Пол</div>
+                        <select value={bjuSex} onChange={(e) => setBjuSex(e.target.value as SexOption)} style={fieldStyle}>
+                            <option value="female">Женский</option>
+                            <option value="male">Мужской</option>
+                        </select>
+                    </div>
+                    <div>
+                        <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>Возраст</div>
+                        <input value={bjuAge} onChange={(e) => setBjuAge(e.target.value)} inputMode="numeric" placeholder="Например: 32" style={fieldStyle} />
+                    </div>
+                    <div>
+                        <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>Рост, см</div>
+                        <input value={bjuHeight} onChange={(e) => setBjuHeight(e.target.value)} inputMode="decimal" placeholder="Например: 170" style={fieldStyle} />
+                    </div>
+                    <div>
+                        <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>Вес, кг</div>
+                        <input value={bjuWeight} onChange={(e) => setBjuWeight(e.target.value)} inputMode="decimal" placeholder="Например: 65" style={fieldStyle} />
+                    </div>
+                    <div>
+                        <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>Цель</div>
+                        <select value={bjuGoal} onChange={(e) => setBjuGoal(e.target.value as GoalOption)} style={fieldStyle}>
+                            <option value="lose">Похудение</option>
+                            <option value="maintain">Поддержание</option>
+                            <option value="gain">Набор</option>
+                        </select>
+                    </div>
+                    <div>
+                        <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>Активность</div>
+                        <select value={bjuActivity} onChange={(e) => setBjuActivity(e.target.value as ActivityOption)} style={fieldStyle}>
+                            <option value="low">Низкая</option>
+                            <option value="medium">Средняя</option>
+                            <option value="high">Высокая</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                    <button
+                        onClick={() => void calculateBju()}
+                        disabled={bjuLoading}
+                        style={{
+                            borderRadius: 14,
+                            padding: "12px 14px",
+                            border: "1px solid rgba(120,230,255,.22)",
+                            background: "rgba(120,230,255,.10)",
+                            color: "rgba(245,240,233,.92)",
+                            fontWeight: 950,
+                            cursor: bjuLoading ? "wait" : "pointer",
+                        }}
+                    >
+                        {bjuLoading ? "Считаем…" : "Рассчитать БЖУ"}
+                    </button>
+                    <div style={{ fontSize: 12, opacity: 0.72 }}>
+                        Endpoint: {bjuEndpoint ?? "не настроен"}
+                    </div>
+                </div>
+
+                {bjuError && (
+                    <div style={{ marginTop: 12, padding: 14, borderRadius: 16, border: "1px solid rgba(255,110,90,.22)", background: "rgba(255,110,90,.06)" }}>
+                        <div style={{ fontWeight: 900 }}>Ошибка расчёта БЖУ</div>
+                        <div style={{ marginTop: 6, color: "rgba(245,240,233,.82)" }}>{bjuError}</div>
+                    </div>
+                )}
+
+                {bjuResult && (
+                    <div style={{ marginTop: 14, display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
+                        <MetricCard label="Калории" value={bjuResult.calories} unit="ккал" />
+                        <MetricCard label="Белки" value={bjuResult.protein} unit="г" />
+                        <MetricCard label="Жиры" value={bjuResult.fat} unit="г" />
+                        <MetricCard label="Углеводы" value={bjuResult.carbs} unit="г" />
+                        <MetricCard label="Вода" value={bjuResult.water} unit="л" />
+                        <MetricCard label="BMI" value={bjuResult.bmi} unit="" />
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
+
+function MetricCard({ label, value, unit }: { label: string; value: number | null; unit: string }) {
+    return (
+        <div
+            style={{
+                borderRadius: 18,
+                border: "1px solid rgba(224,197,143,.14)",
+                background: "rgba(10,18,38,.24)",
+                padding: 14,
+            }}
+        >
+            <div style={{ fontSize: 12, opacity: 0.72, fontWeight: 800 }}>{label}</div>
+            <div style={{ marginTop: 8, fontSize: 24, fontWeight: 950 }}>
+                {value === null ? "—" : `${value.toFixed(1)}${unit ? ` ${unit}` : ""}`}
+            </div>
+        </div>
+    );
+}
+
+const fieldStyle: CSSProperties = {
+    marginTop: 6,
+    width: "100%",
+    padding: "12px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(224,197,143,.14)",
+    background: "rgba(10,18,38,.28)",
+    color: "rgba(245,240,233,.92)",
+    outline: "none",
+};
