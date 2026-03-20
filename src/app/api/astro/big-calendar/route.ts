@@ -8,6 +8,12 @@ type RequestBody = {
     birthDate?: string;
     birthTime?: string;
     birthPlace?: string;
+
+    birth_date?: string;
+    birth_time?: string;
+    birth_city?: string;
+    birth_place?: string;
+
     name?: string | null;
     months?: number;
 };
@@ -35,6 +41,7 @@ const OPENAI_MODEL =
     process.env.BIG_CALENDAR_OPENAI_MODEL?.trim() ||
     process.env.OPENAI_MODEL?.trim() ||
     "gpt-4.1-mini";
+
 const BIG_CALENDAR_API_URL =
     process.env.BIG_CALENDAR_API_URL?.trim() ||
     "http://45.90.35.133:1800/calendar/favorable/3m";
@@ -51,8 +58,40 @@ function readText(json: OpenAIResponse | null) {
     );
 }
 
-async function createOpenAIText(prompt: string, input: unknown, maxTokens: number) {
+function normalizeBirthDate(input: string): string {
+    return input.trim();
+}
+
+function normalizeBirthTime(input: string): string {
+    const value = input.trim();
+
+    if (!value) return value;
+
+    if (value.toLowerCase() === "я не знаю") {
+        return "я не знаю";
+    }
+
+    const hhmmss = value.match(/^(\d{2}):(\d{2}):(\d{2})$/);
+    if (hhmmss) {
+        const [, hh, mm] = hhmmss;
+        return `${hh}:${mm}`;
+    }
+
+    const hhmm = value.match(/^(\d{2}):(\d{2})$/);
+    if (hhmm) {
+        return value;
+    }
+
+    return value;
+}
+
+async function createOpenAIText(
+    prompt: string,
+    input: unknown,
+    maxTokens: number
+) {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
+
     if (!apiKey) {
         throw new RouteError(
             "Не настроен OPENAI_API_KEY для генерации текста БЖК. Добавьте ключ в окружение сервера.",
@@ -91,6 +130,7 @@ async function createOpenAIText(prompt: string, input: unknown, maxTokens: numbe
     });
 
     const json = (await response.json().catch(() => null)) as OpenAIResponse | null;
+
     if (!response.ok) {
         throw new RouteError(
             json?.error?.message || "OpenAI не смог сгенерировать текст БЖК.",
@@ -99,6 +139,7 @@ async function createOpenAIText(prompt: string, input: unknown, maxTokens: numbe
     }
 
     const text = readText(json);
+
     if (!text) {
         throw new RouteError("OpenAI вернул пустой текст для БЖК.", 502);
     }
@@ -106,24 +147,23 @@ async function createOpenAIText(prompt: string, input: unknown, maxTokens: numbe
     return text;
 }
 
-async function requestCalendar(
-    payload: Record<string, string>,
-    mode: "json" | "form"
-) {
+async function requestCalendar(payload: {
+    birth_date: string;
+    birth_time: string;
+    birth_place: string;
+    months: number;
+}) {
     const response = await fetch(BIG_CALENDAR_API_URL, {
         method: "POST",
-        headers:
-            mode === "json"
-                ? { "Content-Type": "application/json" }
-                : { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-        body:
-            mode === "json"
-                ? JSON.stringify(payload)
-                : new URLSearchParams(payload).toString(),
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
     });
 
     const contentType = response.headers.get("content-type") || "";
     const isJson = contentType.includes("application/json");
+
     const data = isJson
         ? await response.json().catch(() => null)
         : await response.text().catch(() => "");
@@ -131,37 +171,66 @@ async function requestCalendar(
     return { response, data, isJson };
 }
 
-async function fetchCalendar(
-    body: Required<Pick<RequestBody, "birthDate" | "birthTime" | "birthPlace">> & {
-        months: number;
-    }
-) {
+async function fetchCalendar(body: {
+    birthDate: string;
+    birthTime: string;
+    birthPlace: string;
+    months: number;
+}) {
     const payload = {
-        birth_date: body.birthDate,
-        birth_time: body.birthTime,
-        birth_place: body.birthPlace,
-        months: String(body.months),
+        birth_date: normalizeBirthDate(body.birthDate),
+        birth_time: normalizeBirthTime(body.birthTime),
+        birth_place: body.birthPlace.trim(),
+        months: body.months,
     };
 
-    const primary = await requestCalendar(payload, "json");
-    const shouldFallback = primary.response.status === 415 || primary.response.status === 422;
-    const result = shouldFallback ? await requestCalendar(payload, "form") : primary;
+    console.log("[/api/astro/big-calendar] outbound payload:", payload);
+
+    const result = await requestCalendar(payload);
+
+    console.log("[/api/astro/big-calendar] external status:", result.response.status);
+    console.log("[/api/astro/big-calendar] external data:", result.data);
 
     if (!result.response.ok) {
-        const detail =
-            typeof result.data === "string"
-                ? result.data.trim() || `HTTP ${result.response.status}`
-                : result.data?.detail || result.data?.message || `HTTP ${result.response.status}`;
+        let detail = `HTTP ${result.response.status}`;
 
-        const message =
-            result.response.status === 403
-                ? `Внешний сервис БЖК отклонил запрос (403 Forbidden). Проверьте доступ сервера к ${BIG_CALENDAR_API_URL}.`
-                : result.response.status === 422
-                    ? `Сервис БЖК вернул 422 Unprocessable Entity. Проверьте формат полей birth_date, birth_time, birth_place и months.`
-                    : `Не удалось получить данные БЖК: ${detail}`;
+        if (typeof result.data === "string") {
+            detail = result.data.trim() || detail;
+        } else if (result.data && typeof result.data === "object") {
+            const obj = result.data as Record<string, any>;
+
+            if (typeof obj.detail === "string") {
+                detail = obj.detail;
+            } else if (typeof obj.message === "string") {
+                detail = obj.message;
+            } else if (typeof obj.error === "string") {
+                detail = obj.error;
+            } else if (Array.isArray(obj.detail)) {
+                detail = obj.detail
+                    .map((item) => {
+                        if (typeof item === "string") return item;
+
+                        if (item && typeof item === "object") {
+                            const loc = Array.isArray(item.loc)
+                                ? item.loc.join(".")
+                                : "";
+                            const msg =
+                                typeof item.msg === "string"
+                                    ? item.msg
+                                    : JSON.stringify(item);
+                            return loc ? `${loc}: ${msg}` : msg;
+                        }
+
+                        return String(item);
+                    })
+                    .join("; ");
+            } else {
+                detail = JSON.stringify(obj, null, 2);
+            }
+        }
 
         throw new RouteError(
-            message,
+            `Сервис БЖК вернул ${result.response.status}: ${detail}`,
             result.response.status >= 400 && result.response.status < 600
                 ? result.response.status
                 : 502
@@ -178,11 +247,28 @@ async function fetchCalendar(
 export async function POST(req: NextRequest) {
     try {
         const body = (await req.json().catch(() => ({}))) as RequestBody;
-        const birthDate = body.birthDate?.trim();
-        const birthTime = body.birthTime?.trim();
-        const birthPlace = body.birthPlace?.trim();
-        const name = body.name?.trim() || "Клиент";
-        const months = body.months && body.months > 0 ? body.months : 3;
+
+        console.log("[/api/astro/big-calendar] incoming body:", body);
+
+        const birthDate = String(body.birth_date ?? body.birthDate ?? "").trim();
+        const birthTime = String(body.birth_time ?? body.birthTime ?? "").trim();
+        const birthPlace = String(
+            body.birth_city ?? body.birth_place ?? body.birthPlace ?? ""
+        ).trim();
+
+        const name = String(body.name ?? "Клиент").trim() || "Клиент";
+        const months =
+            typeof body.months === "number" && body.months > 0 ? body.months : 3;
+
+        console.log("[/api/astro/big-calendar] normalized input preview:", {
+            birthDateRaw: birthDate,
+            birthDateNormalized: normalizeBirthDate(birthDate),
+            birthTimeRaw: birthTime,
+            birthTimeNormalized: normalizeBirthTime(birthTime),
+            birthPlace,
+            months,
+            name,
+        });
 
         if (!birthDate || !birthTime || !birthPlace) {
             throw new RouteError(
@@ -203,6 +289,7 @@ export async function POST(req: NextRequest) {
             { days: (calendarJson as { days?: unknown[] })?.days ?? [] },
             5000
         );
+
         const summaryText = await createOpenAIText(
             BIG_CALENDAR_SUMMARY_PROMPT,
             reportText,
@@ -220,12 +307,16 @@ export async function POST(req: NextRequest) {
                 general_p2: summaryText,
                 name,
                 birth_date: birthDate,
-                birth_time: birthTime,
+                birth_time: normalizeBirthTime(birthTime),
             },
         });
     } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "Unknown error";
+        const message =
+            error instanceof Error ? error.message : "Unknown error";
         const status = error instanceof RouteError ? error.status : 500;
+
+        console.error("[/api/astro/big-calendar] error:", error);
+
         return NextResponse.json({ ok: false, error: message }, { status });
     }
 }

@@ -74,6 +74,7 @@ export default function CalculationsPage() {
     const [loading, setLoading] = useState(false);
     const [activeKind, setActiveKind] = useState<CalcKind | null>(null);
     const [loadingStep, setLoadingStep] = useState(0);
+    const [bigCalendarStatus, setBigCalendarStatus] = useState<string | null>(null);
 
     const [err, setErr] = useState<string | null>(null);
     const [result, setResult] = useState<ApiResult | null>(null);
@@ -119,7 +120,26 @@ export default function CalculationsPage() {
         });
     }
 
-    async function downloadBigCalendarPdf(pdfPayload: Record<string, unknown>) {
+    function getBigCalendarPdfFileName(
+        pdfPayload?: Record<string, unknown> | null,
+        fallbackFileName?: string | null
+    ) {
+        if (
+            pdfPayload &&
+            typeof pdfPayload.file_name === "string" &&
+            pdfPayload.file_name.trim()
+        ) {
+            return pdfPayload.file_name.trim();
+        }
+
+        if (fallbackFileName?.trim()) {
+            return fallbackFileName.trim();
+        }
+
+        return `БЖК_${profile?.birth_date ?? targetDate}.pdf`;
+    }
+
+    async function fetchBigCalendarPdfBlob(pdfPayload: Record<string, unknown>) {
         const res = await fetch("/api/astro/big-calendar/pdf", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -131,28 +151,58 @@ export default function CalculationsPage() {
             throw new Error(json?.error || "Не удалось собрать PDF-файл.");
         }
 
-        const blob = await res.blob();
+        return await res.blob();
+    }
+
+    function forceDownloadBlob(blob: Blob, fileName: string) {
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement("a");
-        const fileName =
-            typeof pdfPayload.file_name === "string" && pdfPayload.file_name.trim()
-                ? pdfPayload.file_name.trim()
-                : `БЖК_${profile?.birth_date ?? targetDate}.pdf`;
 
         link.href = url;
         link.download = fileName;
+
         document.body.appendChild(link);
         link.click();
         link.remove();
-        window.URL.revokeObjectURL(url);
+
+        window.setTimeout(() => {
+            window.URL.revokeObjectURL(url);
+        }, 1000);
     }
 
+    function openBlobInNewTab(blob: Blob) {
+        const url = window.URL.createObjectURL(blob);
+        window.open(url, "_blank", "noopener,noreferrer");
+
+        window.setTimeout(() => {
+            window.URL.revokeObjectURL(url);
+        }, 60_000);
+    }
+
+    async function downloadBigCalendarPdf(pdfPayload: Record<string, unknown>) {
+        const blob = await fetchBigCalendarPdfBlob(pdfPayload);
+        const fileName = getBigCalendarPdfFileName(pdfPayload, null);
+        forceDownloadBlob(blob, fileName);
+    }
+
+    async function openBigCalendarPdf(pdfPayload: Record<string, unknown>) {
+        const blob = await fetchBigCalendarPdfBlob(pdfPayload);
+        openBlobInNewTab(blob);
+    }
 
     async function handleBigCalendarPdfDownload(pdfPayload: Record<string, unknown>) {
         try {
             await downloadBigCalendarPdf(pdfPayload);
         } catch (e: any) {
             setErr(e?.message || "Не удалось скачать PDF-файл.");
+        }
+    }
+
+    async function handleBigCalendarPdfOpen(pdfPayload: Record<string, unknown>) {
+        try {
+            await openBigCalendarPdf(pdfPayload);
+        } catch (e: any) {
+            setErr(e?.message || "Не удалось открыть PDF-файл.");
         }
     }
 
@@ -356,7 +406,6 @@ export default function CalculationsPage() {
                         .from("saved_calculations")
                         .select(
                             "id, kind, target_date, result_text, result_json, input_params, updated_at, interpretation_text, interpretation_model, interpretation_updated_at, pdf_url, pdf_path, file_name"
-
                         )
                         .eq("user_id", uid)
                         .order("updated_at", { ascending: false }),
@@ -781,7 +830,6 @@ export default function CalculationsPage() {
                 .from("saved_calculations")
                 .select(
                     "id, kind, target_date, result_text, result_json, input_params, updated_at, interpretation_text, interpretation_model, interpretation_updated_at, pdf_url, pdf_path, file_name"
-
                 )
                 .eq("user_id", currentUserId)
                 .eq("kind", kind)
@@ -900,31 +948,57 @@ export default function CalculationsPage() {
         }
     }
 
-    async function runBigCalendar() {
+    async function runBigCalendar(forceFresh = false) {
         if (!requireProfile()) return;
 
         setLoading(true);
         setActiveKind("big_calendar");
+        setBigCalendarStatus("Собираем астроданные…");
         resetResultState();
 
         try {
-            if (showSaved("big_calendar")) return;
+            if (!forceFresh && showSaved("big_calendar")) return;
+
+            const payload = {
+                birth_date: profile?.birth_date,
+                birth_time: profile?.birth_time,
+                birth_city: profile?.birth_city,
+                months: 3,
+            };
+
+            console.log("[runBigCalendar] payload:", payload);
+
+            setBigCalendarStatus("Анализируем благоприятные периоды…");
 
             const res = await fetch("/api/astro/big-calendar", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    birthDate: profile?.birth_date,
-                    birthTime: profile?.birth_time,
-                    birthPlace: profile?.birth_city,
-                    months: 3,
-                }),
+                body: JSON.stringify(payload),
             });
 
-            const json = await res.json().catch(() => null);
-            if (!res.ok) {
-                throw new Error(json?.error || "Не удалось сформировать большой женский календарь.");
+            const rawText = await res.text();
+            let json: any = null;
+
+            try {
+                json = rawText ? JSON.parse(rawText) : null;
+            } catch {
+                json = null;
             }
+
+            console.log("[runBigCalendar] status:", res.status);
+            console.log("[runBigCalendar] raw response:", rawText);
+            console.log("[runBigCalendar] parsed response:", json);
+
+            if (!res.ok) {
+                throw new Error(
+                    json?.error ||
+                    json?.detail ||
+                    rawText ||
+                    "Не удалось сформировать большой женский календарь."
+                );
+            }
+
+            setBigCalendarStatus("Готовим персональную интерпретацию…");
 
             const pdfPayload = {
                 ...(json?.pdfPayload || {}),
@@ -941,12 +1015,15 @@ export default function CalculationsPage() {
             });
 
             setResultMeta({ source: "fresh", updatedAt: null, expiresAt: null });
+
             setInterpretation({
                 loading: false,
                 text: json?.summaryText || null,
                 error: null,
                 model: json?.model || null,
             });
+
+            setBigCalendarStatus("Сохраняем результат в кабинет…");
 
             const savedRow = await saveCalculation({
                 kind: "big_calendar",
@@ -973,6 +1050,7 @@ export default function CalculationsPage() {
                 : null;
 
             const nextSavedRow = interpretedSavedRow || savedRow;
+
             if (nextSavedRow) {
                 setSavedMap((prev) => ({
                     ...prev,
@@ -980,11 +1058,73 @@ export default function CalculationsPage() {
                 }));
             }
         } catch (e: any) {
+            console.error("[runBigCalendar] error:", e);
             setErr(e?.message || "Не удалось сформировать большой женский календарь");
         } finally {
             setLoading(false);
             setActiveKind(null);
+            setBigCalendarStatus(null);
         }
+    }
+
+    function openBigCalendarSaved() {
+        resetResultState();
+
+        const opened = showSaved("big_calendar");
+        if (!opened) {
+            setErr("Сохранённый большой женский календарь не найден или уже истёк.");
+            return;
+        }
+
+        window.setTimeout(() => {
+            const resultBlock = document.getElementById("calculation-result-block");
+            if (resultBlock) {
+                resultBlock.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+        }, 50);
+    }
+
+    async function downloadSavedBigCalendarPdf() {
+        const row = getSavedRow("big_calendar");
+
+        if (!row) {
+            setErr("Сохранённый PDF для большого женского календаря не найден.");
+            return;
+        }
+
+        const raw = row.result_json || {};
+        const pdfPayload =
+            raw?.pdf_payload ||
+            (row.pdf_url
+                ? null
+                : {
+                    ...(raw || {}),
+                    file_name:
+                        row.file_name ||
+                        `БЖК_${profile?.birth_date ?? targetDate}.pdf`,
+                });
+
+        if (row.pdf_url) {
+            const response = await fetch(row.pdf_url);
+            if (!response.ok) {
+                throw new Error("Не удалось скачать сохранённый PDF-файл.");
+            }
+
+            const blob = await response.blob();
+            const fileName = getBigCalendarPdfFileName(
+                pdfPayload,
+                row.file_name || null
+            );
+            forceDownloadBlob(blob, fileName);
+            return;
+        }
+
+        if (!pdfPayload) {
+            setErr("PDF для большого женского календаря пока недоступен.");
+            return;
+        }
+
+        await handleBigCalendarPdfDownload(pdfPayload);
     }
 
     async function openPayment(kind: "day" | "week" | "month" | "big_calendar") {
@@ -1026,6 +1166,39 @@ export default function CalculationsPage() {
         }
     }
 
+    async function openSavedBigCalendarPdf() {
+        const row = getSavedRow("big_calendar");
+
+        if (!row) {
+            setErr("Сохранённый PDF для большого женского календаря не найден.");
+            return;
+        }
+
+        const raw = row.result_json || {};
+        const pdfPayload =
+            raw?.pdf_payload ||
+            (row.pdf_url
+                ? null
+                : {
+                    ...(raw || {}),
+                    file_name:
+                        row.file_name ||
+                        `БЖК_${profile?.birth_date ?? targetDate}.pdf`,
+                });
+
+        if (row.pdf_url) {
+            window.open(row.pdf_url, "_blank", "noopener,noreferrer");
+            return;
+        }
+
+        if (!pdfPayload) {
+            setErr("PDF для большого женского календаря пока недоступен.");
+            return;
+        }
+
+        await handleBigCalendarPdfOpen(pdfPayload);
+    }
+
     function handleAction(kind: CalcKind) {
         if (kind === "natal") {
             void runNatal();
@@ -1050,6 +1223,12 @@ export default function CalculationsPage() {
 
     const regularProducts = products.filter((p) => p.code !== "big_calendar");
     const bigCalendarProduct = products.find((p) => p.code === "big_calendar") ?? null;
+
+    const resultPdfUrl =
+        result && "raw" in result ? result.raw?.pdf_url ?? null : null;
+
+    const resultPdfPayload =
+        result && "raw" in result ? result.raw?.pdf_payload ?? null : null;
 
     return (
         <div style={{ display: "grid", gap: 16 }}>
@@ -1097,7 +1276,8 @@ export default function CalculationsPage() {
                             color: "rgba(245,240,233,.86)",
                         }}
                     >
-                        Список расчётов пуст. Проверь таблицу <b>calculation_products</b> и поле <b>is_active = true</b>.
+                        Список расчётов пуст. Проверь таблицу <b>calculation_products</b> и
+                        поле <b>is_active = true</b>.
                     </div>
                 )}
 
@@ -1242,39 +1422,112 @@ export default function CalculationsPage() {
                                         )}
                                     </div>
 
-                                    <button
-                                        disabled={!canRun || profileLoading || loading}
-                                        onClick={() => handleAction(product.code)}
-                                        style={{
-                                            ...btn(),
-                                            minWidth: 240,
-                                            alignSelf: "center",
-                                            marginTop: "auto",
-                                        }}
-                                    >
-                                        {loading && activeKind === product.code
-                                            ? purchased && !product.is_free
-                                                ? "Открываем…"
-                                                : "Выполняется…"
-                                            : product.is_free
-                                                ? hasSaved
-                                                    ? "Открыть результат"
-                                                    : "Выполнить расчёт"
-                                                : purchased
-                                                    ? "Открыть результат"
-                                                    : `Купить за ${product.price_rub} ₽`}
-                                    </button>
+                                    {loading && activeKind === product.code ? (
+                                        <div
+                                            style={{
+                                                marginTop: "auto",
+                                                width: "100%",
+                                                borderRadius: 18,
+                                                padding: "16px 14px",
+                                                border: "1px solid rgba(224,197,143,.18)",
+                                                background: "rgba(224,197,143,.08)",
+                                                display: "grid",
+                                                gap: 8,
+                                                textAlign: "center",
+                                                alignSelf: "stretch",
+                                            }}
+                                        >
+                                            <div
+                                                style={{
+                                                    fontWeight: 900,
+                                                    fontSize: 20,
+                                                    color: "rgba(245,240,233,.96)",
+                                                    lineHeight: 1.2,
+                                                }}
+                                            >
+                                                {bigCalendarStatus || "Формируем календарь…"}
+                                                <AnimatedDots />
+                                            </div>
+
+                                            <div
+                                                style={{
+                                                    fontSize: 13,
+                                                    lineHeight: 1.45,
+                                                    color: "rgba(245,240,233,.72)",
+                                                }}
+                                            >
+                                                Подготавливаем персональный календарь,
+                                                интерпретацию и PDF.
+                                            </div>
+                                        </div>
+                                    ) : !purchased ? (
+                                        <button
+                                            disabled={!canRun || profileLoading || loading}
+                                            onClick={() => void openPayment("big_calendar")}
+                                            style={{
+                                                ...btn(),
+                                                minWidth: 240,
+                                                alignSelf: "center",
+                                                marginTop: "auto",
+                                            }}
+                                        >
+                                            Купить за {product.price_rub} ₽
+                                        </button>
+                                    ) : hasSaved ? (
+                                        <div
+                                            style={{
+                                                display: "grid",
+                                                gap: 10,
+                                                width: "100%",
+                                                marginTop: "auto",
+                                                gridTemplateColumns: "1fr",
+                                            }}
+                                        >
+                                            <button
+                                                onClick={() => void openSavedBigCalendarPdf()}
+                                                style={{
+                                                    ...btn(),
+                                                    width: "100%",
+                                                }}
+                                            >
+                                                Открыть PDF
+                                            </button>
+
+                                            <button
+                                                onClick={() => void downloadSavedBigCalendarPdf()}
+                                                style={{
+                                                    ...btn(),
+                                                    width: "100%",
+                                                }}
+                                            >
+                                                Скачать PDF
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            disabled={!canRun || profileLoading || loading}
+                                            onClick={() => void runBigCalendar(true)}
+                                            style={{
+                                                ...btn(),
+                                                minWidth: 240,
+                                                alignSelf: "center",
+                                                marginTop: "auto",
+                                            }}
+                                        >
+                                            Выполнить расчёт
+                                        </button>
+                                    )}
                                 </div>
                             );
                         })()}
                     </div>
                 )}
 
-
-
                 {result && !loading && (
-                    <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
-
+                    <div
+                        id="calculation-result-block"
+                        style={{ marginTop: 16, display: "grid", gap: 12 }}
+                    >
                         {result.kind === "natal" &&
                             !!natalInterpretationSections.length && (
                                 <div
@@ -1372,37 +1625,75 @@ export default function CalculationsPage() {
                                 ))}
                         </div>
 
-                        {"raw" in result && (result.raw?.pdf_url || result.raw?.pdf_payload) && (
-                            result.raw?.pdf_url ? (
-                                <a
-                                    href={result.raw.pdf_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    style={{
-                                        display: "inline-block",
-                                        width: "fit-content",
-                                        borderRadius: 14,
-                                        padding: "11px 13px",
-                                        border: "1px solid rgba(224,197,143,.18)",
-                                        background: "rgba(224,197,143,.10)",
-                                        color: "rgba(245,240,233,.92)",
-                                        fontWeight: 950,
-                                        textDecoration: "none",
-                                    }}
-                                >
-                                    Скачать PDF
-                                </a>
-                            ) : (
-                                <button
-                                    onClick={() => void handleBigCalendarPdfDownload(result.raw.pdf_payload)}
-                                    style={{
-                                        ...btn(),
-                                        width: "fit-content",
-                                    }}
-                                >
-                                    Скачать PDF
-                                </button>
-                            )
+                        {"raw" in result && (resultPdfUrl || resultPdfPayload) && (
+                            <div
+                                style={{
+                                    display: "flex",
+                                    gap: 10,
+                                    flexWrap: "wrap",
+                                }}
+                            >
+                                {resultPdfUrl ? (
+                                    <>
+                                        <a
+                                            href={resultPdfUrl}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{
+                                                display: "inline-block",
+                                                width: "fit-content",
+                                                borderRadius: 14,
+                                                padding: "11px 13px",
+                                                border: "1px solid rgba(224,197,143,.18)",
+                                                background: "rgba(224,197,143,.10)",
+                                                color: "rgba(245,240,233,.92)",
+                                                fontWeight: 950,
+                                                textDecoration: "none",
+                                            }}
+                                        >
+                                            Открыть PDF
+                                        </a>
+
+                                        <button
+                                            onClick={() => void downloadSavedBigCalendarPdf()}
+                                            style={{
+                                                ...btn(),
+                                                width: "fit-content",
+                                            }}
+                                        >
+                                            Скачать PDF
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <button
+                                            onClick={() =>
+                                                void handleBigCalendarPdfOpen(resultPdfPayload)
+                                            }
+                                            style={{
+                                                ...btn(),
+                                                width: "fit-content",
+                                            }}
+                                        >
+                                            Открыть PDF
+                                        </button>
+
+                                        <button
+                                            onClick={() =>
+                                                void handleBigCalendarPdfDownload(
+                                                    resultPdfPayload
+                                                )
+                                            }
+                                            style={{
+                                                ...btn(),
+                                                width: "fit-content",
+                                            }}
+                                        >
+                                            Скачать PDF
+                                        </button>
+                                    </>
+                                )}
+                            </div>
                         )}
                     </div>
                 )}
@@ -1468,7 +1759,8 @@ export default function CalculationsPage() {
                                     color: "rgba(245,240,233,.72)",
                                 }}
                             >
-                                Пожалуйста, подождите. После завершения результат автоматически сохранится в кабинете.
+                                Пожалуйста, подождите. После завершения результат
+                                автоматически сохранится в кабинете.
                             </div>
                         </div>
                     )}
