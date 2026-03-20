@@ -16,10 +16,20 @@ const BASE_NAV = [
 
 const ADMIN_NAV = { href: "/cabinet/admin", label: "Админ" } as const;
 
+const PAGE_LOADING_MESSAGES: Record<string, string> = {
+    "/cabinet/profile": "Загружаем данные профиля",
+    "/cabinet/purchases": "Загружаем покупки",
+    "/cabinet/admin": "Загрузка админ-панели",
+};
+
+function getLoadingMessage(href: string) {
+    return PAGE_LOADING_MESSAGES[href] ?? "Загружаем раздел кабинета";
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
     const router = useRouter();
-    const { loading, startLoading } = useCabinetLoading();
+    const { loading, message, startLoading } = useCabinetLoading();
     const [isAdmin, setIsAdmin] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [isMobile, setIsMobile] = useState(false);
@@ -97,7 +107,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         if (href === pathname || href.startsWith(`${pathname}/`)) return;
 
         pendingNavigationDoneRef.current?.();
-        pendingNavigationDoneRef.current = startLoading();
+        pendingNavigationDoneRef.current = startLoading({ message: getLoadingMessage(href) });
         setIsMobileMenuOpen(false);
         router.push(href);
     }
@@ -274,7 +284,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                 </div>
             </header>
 
-            <MoonRouteTransition show={loading} />
+            <MoonRouteTransition show={loading} message={message} />
 
             <main style={{ maxWidth: 1200, margin: "0 auto", padding: "18px 16px" }}>{children}</main>
         </div>

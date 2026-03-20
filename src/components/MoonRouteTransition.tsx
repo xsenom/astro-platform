@@ -4,9 +4,10 @@ import React from "react";
 
 type Props = {
     show: boolean;
+    message?: string;
 };
 
-export default function MoonRouteTransition({ show }: Props) {
+export default function MoonRouteTransition({ show, message = "Загружаем данные" }: Props) {
     if (!show) return null;
 
     return (
@@ -31,7 +32,8 @@ export default function MoonRouteTransition({ show }: Props) {
       `}</style>
 
             <div
-                aria-hidden="true"
+                aria-live="polite"
+                aria-busy="true"
                 style={{
                     position: "fixed",
                     inset: 0,
@@ -44,20 +46,64 @@ export default function MoonRouteTransition({ show }: Props) {
                         "radial-gradient(1200px 600px at 50% 35%, rgba(10,18,38,.30), rgba(10,18,38,.62))",
                     backdropFilter: "blur(6px)",
                     WebkitBackdropFilter: "blur(6px)",
+                    padding: "24px 16px",
                 }}
             >
                 <div
                     style={{
-                        width: "min(980px, 92vw)",
-                        display: "flex",
-                        gap: "clamp(14px, 3vw, 28px)",
-                        justifyContent: "center",
-                        alignItems: "center",
+                        width: "min(980px, 100%)",
+                        display: "grid",
+                        gap: "clamp(16px, 4vw, 28px)",
+                        justifyItems: "center",
                     }}
                 >
-                    <Moon size={220} base="rgba(30, 38, 62, 0.98)" rim="rgba(120, 150, 220, 0.18)" glow="rgba(120, 150, 220, 0.18)" delayMs={0} />
-                    <Moon size={260} base="rgba(72, 92, 138, 0.96)" rim="rgba(190, 210, 255, 0.22)" glow="rgba(170, 200, 255, 0.22)" delayMs={140} />
-                    <Moon size={300} base="rgba(232, 236, 248, 0.95)" rim="rgba(255, 255, 255, 0.28)" glow="rgba(224, 197, 143, 0.18)" delayMs={280} />
+                    <div
+                        style={{
+                            width: "min(520px, 100%)",
+                            padding: "clamp(16px, 4vw, 26px)",
+                            borderRadius: 28,
+                            border: "1px solid rgba(224,197,143,.16)",
+                            background: "linear-gradient(180deg, rgba(9,15,31,.82), rgba(18,28,56,.68))",
+                            boxShadow: "0 18px 60px rgba(0,0,0,.28)",
+                            textAlign: "center",
+                        }}
+                    >
+                        <div
+                            style={{
+                                color: "rgba(245,240,233,.95)",
+                                fontWeight: 900,
+                                fontSize: "clamp(20px, 4vw, 30px)",
+                                lineHeight: 1.2,
+                            }}
+                        >
+                            {message}
+                        </div>
+                        <div
+                            style={{
+                                marginTop: 10,
+                                color: "rgba(245,240,233,.72)",
+                                fontSize: "clamp(13px, 2.7vw, 15px)",
+                                lineHeight: 1.5,
+                            }}
+                        >
+                            Подождите пару секунд — анимация остановится сразу после завершения загрузки.
+                        </div>
+                    </div>
+
+                    <div
+                        style={{
+                            width: "min(980px, 100%)",
+                            display: "flex",
+                            gap: "clamp(12px, 3vw, 28px)",
+                            justifyContent: "center",
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                        }}
+                    >
+                        <Moon size="clamp(88px, 20vw, 220px)" base="rgba(30, 38, 62, 0.98)" rim="rgba(120, 150, 220, 0.18)" glow="rgba(120, 150, 220, 0.18)" delayMs={0} />
+                        <Moon size="clamp(104px, 24vw, 260px)" base="rgba(72, 92, 138, 0.96)" rim="rgba(190, 210, 255, 0.22)" glow="rgba(170, 200, 255, 0.22)" delayMs={140} />
+                        <Moon size="clamp(120px, 28vw, 300px)" base="rgba(232, 236, 248, 0.95)" rim="rgba(255, 255, 255, 0.28)" glow="rgba(224, 197, 143, 0.18)" delayMs={280} />
+                    </div>
                 </div>
             </div>
         </>
@@ -65,13 +111,13 @@ export default function MoonRouteTransition({ show }: Props) {
 }
 
 function Moon({
-                  size,
-                  base,
-                  rim,
-                  glow,
-                  delayMs,
-              }: {
-    size: number;
+    size,
+    base,
+    rim,
+    glow,
+    delayMs,
+}: {
+    size: string;
     base: string;
     rim: string;
     glow: string;
@@ -81,7 +127,7 @@ function Moon({
         <div
             style={{
                 width: size,
-                height: size,
+                aspectRatio: "1 / 1",
                 borderRadius: 9999,
                 position: "relative",
                 background: `radial-gradient(circle at 32% 28%, rgba(255,255,255,.20), ${base} 55%, rgba(0,0,0,.20) 100%)`,
@@ -91,6 +137,7 @@ function Moon({
                 animationDelay: `${delayMs}ms`,
                 opacity: 0,
                 overflow: "hidden",
+                flex: "0 1 auto",
             }}
         >
             <div

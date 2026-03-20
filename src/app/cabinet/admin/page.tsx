@@ -3,6 +3,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
+import { useCabinetLoading } from "@/components/cabinet/cabinetLoading";
 
 type ProfileRow = {
     id: string;
@@ -428,6 +429,7 @@ function normalizeBirthDateInput(value: string) {
 }
 
 export default function AdminPage() {
+    const { startLoading } = useCabinetLoading();
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
 
@@ -949,6 +951,7 @@ export default function AdminPage() {
     }
 
     async function loadSummary() {
+        const doneLoading = startLoading({ message: "Загрузка админ-панели" });
         setLoading(true);
         setErr(null);
 
@@ -1001,6 +1004,7 @@ export default function AdminPage() {
             setErr(e instanceof Error ? e.message : "Не удалось загрузить админку.");
         } finally {
             setLoading(false);
+            doneLoading();
         }
     }
 
