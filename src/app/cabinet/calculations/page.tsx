@@ -447,7 +447,7 @@ export default function CalculationsPage() {
                 const { data: existing, error: selectError } = await supabase
                     .from("saved_calculations")
                     .select("id")
-                    .eq("user_id", userId)
+                     .eq("user_id", userId)
                     .eq("kind", "day")
                     .eq("target_date", params.targetDate ?? null)
                     .maybeSingle();
@@ -499,7 +499,7 @@ export default function CalculationsPage() {
             const { data: existing, error: selectError } = await supabase
                 .from("saved_calculations")
                 .select("id")
-                .eq("user_id", userId)
+                 .eq("user_id", userId)
                 .eq("kind", params.kind)
                 .maybeSingle();
 
@@ -551,78 +551,6 @@ export default function CalculationsPage() {
         }
     }
 
-    async function runBigCalendar() {
-        if (!requireProfile()) return;
-
-        if (!isPurchased("big_calendar")) {
-            setErr("Расчёт доступен только после оплаты.");
-            return;
-        }
-
-        setLoading(true);
-        setActiveKind("big_calendar");
-        setErr(null);
-        setResult(null);
-        setResultMeta({ source: null, updatedAt: null });
-
-        try {
-            if (showSaved("big_calendar")) return;
-
-            const { data: userData, error } = await supabase.auth.getUser();
-
-            if (error || !userData.user) {
-                window.location.href = "/login";
-                return;
-            }
-
-            const res = await fetch(`${API}/calculations/big-calendar`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-User-Id": userData.user.id,
-                },
-            });
-
-            const json = await res.json().catch(() => null);
-
-            if (!res.ok) {
-                throw new Error(json?.detail || "Не удалось выполнить расчёт");
-            }
-
-            const text = json?.text || "PDF сформирован";
-
-            setResult({
-                kind: "big_calendar",
-                text,
-                raw: json,
-            });
-
-            setResultMeta({ source: "fresh", updatedAt: null });
-            void loadInterpretation("big_calendar", text, json);
-
-            setSavedMap((prev) => ({
-                ...prev,
-                big_calendar: {
-                    id: "temp-big-calendar",
-                    kind: "big_calendar",
-                    target_date: null,
-                    result_text: text,
-                    result_json: json,
-                    input_params: null,
-                    updated_at: new Date().toISOString(),
-                    pdf_url: json?.pdf_url ?? null,
-                    pdf_path: json?.pdf_path ?? null,
-                    file_name: json?.file_name ?? null,
-                },
-            }));
-        } catch (e: any) {
-            setErr(e?.message || "Ошибка");
-        } finally {
-            setLoading(false);
-            setActiveKind(null);
-        }
-    }
-
     function showSaved(kind: CalcKind) {
         const row = savedMap[kind];
         if (!row) return false;
@@ -645,6 +573,78 @@ export default function CalculationsPage() {
 
         void loadInterpretation(kind, row.result_text, row.result_json);
         return true;
+    }
+
+    async function openPurchasedResult(kind: Exclude<CalcKind, "natal">) {
+        setLoading(true);
+        setActiveKind(kind);
+        setErr(null);
+        setResult(null);
+        setResultMeta({ source: null, updatedAt: null });
+
+        try {
+            if (showSaved(kind)) return;
+
+            let currentUserId = userId;
+            if (!currentUserId) {
+                const { data: userData, error } = await supabase.auth.getUser();
+                if (error || !userData.user) {
+                    window.location.href = "/login";
+                    return;
+                }
+                currentUserId = userData.user.id;
+                setUserId(currentUserId);
+            }
+
+            const savedQuery = supabase
+                .from("saved_calculations")
+                .select(
+                    "id, kind, target_date, result_text, result_json, input_params, updated_at, pdf_url, pdf_path, file_name"
+                )
+                 .eq("user_id", currentUserId)
+                .eq("kind", kind)
+                .order("updated_at", { ascending: false })
+                .limit(1);
+
+            const { data, error } =
+                kind === "day"
+                    ? await savedQuery.eq("target_date", targetDate).maybeSingle()
+                    : await savedQuery.maybeSingle();
+
+            if (error) {
+                throw new Error(error.message);
+            }
+
+            if (!data) {
+                throw new Error("Результат по этой покупке ещё не найден. Если оплата прошла только что, обновите страницу через несколько секунд.");
+            }
+
+            const row = data as SavedCalculationRow;
+            setSavedMap((prev) => ({ ...prev, [kind]: row }));
+
+            setResult({
+                kind,
+                text: row.result_text,
+                raw: {
+                    ...(row.result_json || {}),
+                    pdf_url: row.pdf_url ?? null,
+                    pdf_path: row.pdf_path ?? null,
+                    file_name: row.file_name ?? null,
+                },
+            } as ApiResult);
+
+            setResultMeta({
+                source: "saved",
+                updatedAt: row.updated_at,
+            });
+
+            void loadInterpretation(kind, row.result_text, row.result_json);
+        } catch (e: any) {
+            setErr(e?.message || "Не удалось открыть сохранённый результат");
+        } finally {
+            setLoading(false);
+            setActiveKind(null);
+        }
     }
 
     function requireProfile(): boolean {
@@ -724,234 +724,6 @@ export default function CalculationsPage() {
         }
     }
 
-    async function runDay() {
-        if (!requireProfile()) return;
-
-        if (!isPurchased("day")) {
-            setErr("Прогноз на день доступен только после оплаты.");
-            return;
-        }
-
-        setLoading(true);
-        setActiveKind("day");
-        setErr(null);
-        setResult(null);
-        setResultMeta({ source: null, updatedAt: null });
-
-        try {
-            if (showSaved("day")) return;
-
-            const qs = new URLSearchParams({
-                year: String(dateParts!.year),
-                month: String(dateParts!.month),
-                day: String(dateParts!.day),
-                hour: String(parseInt(timeParts!.hour || "12", 10) || 12),
-                minute: String(parseInt(timeParts!.minute || "0", 10) || 0),
-                city_name: profile!.birth_city!.trim(),
-                target_date: targetDate,
-            });
-
-            const json = await callJson(`${API}/transits_day?${qs.toString()}`);
-            const item = Array.isArray(json) ? json[0] : json;
-
-            const lines: string[] = [];
-            if (item?.day_summary) lines.push(item.day_summary);
-            if (Array.isArray(item?.aspects_text)) lines.push("", ...item.aspects_text);
-
-            const text = lines.join("\n") || "Пустой ответ";
-
-            setResult({
-                kind: "day",
-                text,
-                raw: json,
-            });
-
-            setResultMeta({ source: "fresh", updatedAt: null });
-            void loadInterpretation("day", text, json);
-
-            await saveCalculation({
-                kind: "day",
-                targetDate,
-                resultText: text,
-                resultJson: json,
-                inputParams: {
-                    birth_date: profile?.birth_date,
-                    birth_time: profile?.birth_time,
-                    birth_city: profile?.birth_city,
-                    target_date: targetDate,
-                },
-            });
-
-            setSavedMap((prev) => ({
-                ...prev,
-                day: {
-                    id: "temp-day",
-                    kind: "day",
-                    target_date: targetDate,
-                    result_text: text,
-                    result_json: json,
-                    input_params: null,
-                    updated_at: new Date().toISOString(),
-                },
-            }));
-        } catch (e: any) {
-            setErr(e?.message || "Ошибка");
-        } finally {
-            setLoading(false);
-            setActiveKind(null);
-        }
-    }
-
-    async function runWeek() {
-        if (!requireProfile()) return;
-
-        if (!isPurchased("week")) {
-            setErr("Прогноз на неделю доступен только после оплаты.");
-            return;
-        }
-
-        setLoading(true);
-        setActiveKind("week");
-        setErr(null);
-        setResult(null);
-        setResultMeta({ source: null, updatedAt: null });
-
-        try {
-            if (showSaved("week")) return;
-
-            const qs = new URLSearchParams({
-                year: String(dateParts!.year),
-                month: String(dateParts!.month),
-                day: String(dateParts!.day),
-                hour: String(parseInt(timeParts!.hour || "12", 10) || 12),
-                minute: String(parseInt(timeParts!.minute || "0", 10) || 0),
-                city_name: profile!.birth_city!.trim(),
-            });
-
-            const json = await callJson(`${API}/transits_week_theme?${qs.toString()}`);
-
-            const arr = json?.weekly_theme_forecast || [];
-            const text = Array.isArray(arr)
-                ? arr.map((x: any) => x.summary_text).join("\n\n")
-                : JSON.stringify(json, null, 2);
-
-            setResult({
-                kind: "week",
-                text: text || "Пустой ответ",
-                raw: json,
-            });
-
-            setResultMeta({ source: "fresh", updatedAt: null });
-            void loadInterpretation("week", text || "Пустой ответ", json);
-
-            await saveCalculation({
-                kind: "week",
-                resultText: text || "Пустой ответ",
-                resultJson: json,
-                inputParams: {
-                    birth_date: profile?.birth_date,
-                    birth_time: profile?.birth_time,
-                    birth_city: profile?.birth_city,
-                },
-            });
-
-            setSavedMap((prev) => ({
-                ...prev,
-                week: {
-                    id: "temp-week",
-                    kind: "week",
-                    target_date: null,
-                    result_text: text || "Пустой ответ",
-                    result_json: json,
-                    input_params: null,
-                    updated_at: new Date().toISOString(),
-                },
-            }));
-        } catch (e: any) {
-            setErr(e?.message || "Ошибка");
-        } finally {
-            setLoading(false);
-            setActiveKind(null);
-        }
-    }
-
-    async function runMonth() {
-        if (!requireProfile()) return;
-
-        if (!isPurchased("month")) {
-            setErr("Прогноз на месяц доступен только после оплаты.");
-            return;
-        }
-
-        setLoading(true);
-        setActiveKind("month");
-        setErr(null);
-        setResult(null);
-        setResultMeta({ source: null, updatedAt: null });
-
-        try {
-            if (showSaved("month")) return;
-
-            const qs = new URLSearchParams({
-                year: String(dateParts!.year),
-                month: String(dateParts!.month),
-                day: String(dateParts!.day),
-                hour: String(parseInt(timeParts!.hour || "12", 10) || 12),
-                minute: String(parseInt(timeParts!.minute || "0", 10) || 0),
-                city_name: profile!.birth_city!.trim(),
-            });
-
-            const json = await callJson(`${API}/transits_month?${qs.toString()}`);
-
-            const arr = json?.month_transits || [];
-            const text =
-                Array.isArray(arr) && arr.length
-                    ? arr
-                        .slice(0, 200)
-                        .map((x: any) => `${x.date} — ${x.description}`)
-                        .join("\n")
-                    : "Нет точных благоприятных аспектов в ближайшие 30 дней.";
-
-            setResult({
-                kind: "month",
-                text,
-                raw: json,
-            });
-
-            setResultMeta({ source: "fresh", updatedAt: null });
-            void loadInterpretation("month", text, json);
-
-            await saveCalculation({
-                kind: "month",
-                resultText: text,
-                resultJson: json,
-                inputParams: {
-                    birth_date: profile?.birth_date,
-                    birth_time: profile?.birth_time,
-                    birth_city: profile?.birth_city,
-                },
-            });
-
-            setSavedMap((prev) => ({
-                ...prev,
-                month: {
-                    id: "temp-month",
-                    kind: "month",
-                    target_date: null,
-                    result_text: text,
-                    result_json: json,
-                    input_params: null,
-                    updated_at: new Date().toISOString(),
-                },
-            }));
-        } catch (e: any) {
-            setErr(e?.message || "Ошибка");
-        } finally {
-            setLoading(false);
-            setActiveKind(null);
-        }
-    }
-
     async function openPayment(kind: "day" | "week" | "month" | "big_calendar") {
         try {
             setErr(null);
@@ -1002,7 +774,7 @@ export default function CalculationsPage() {
                 void openPayment(kind);
                 return;
             }
-            void runBigCalendar();
+            void openPurchasedResult(kind);
             return;
         }
 
@@ -1011,18 +783,8 @@ export default function CalculationsPage() {
             return;
         }
 
-        if (kind === "day") {
-            void runDay();
-            return;
-        }
-
-        if (kind === "week") {
-            void runWeek();
-            return;
-        }
-
-        if (kind === "month") {
-            void runMonth();
+        if (kind === "day" || kind === "week" || kind === "month") {
+            void openPurchasedResult(kind);
         }
     }
 
@@ -1148,12 +910,16 @@ export default function CalculationsPage() {
                                         style={{ ...btn(), width: "100%", marginTop: "auto" }}
                                     >
                                         {loading && activeKind === product.code
-                                            ? "Выполняется…"
-                                            : product.is_free || purchased
+                                            ? purchased && !product.is_free
+                                                ? "Открываем…"
+                                                : "Выполняется…"
+                                            : product.is_free
                                                 ? hasSaved
                                                     ? "Открыть результат"
                                                     : "Выполнить расчёт"
-                                                : `Купить за ${product.price_rub} ₽`}
+                                                : purchased
+                                                    ? "Открыть результат"
+                                                    : `Купить за ${product.price_rub} ₽`}
                                     </button>
                                 </div>
                             );
@@ -1233,12 +999,16 @@ export default function CalculationsPage() {
                                         }}
                                     >
                                         {loading && activeKind === product.code
-                                            ? "Выполняется…"
-                                            : product.is_free || purchased
+                                            ? purchased && !product.is_free
+                                                ? "Открываем…"
+                                                : "Выполняется…"
+                                            : product.is_free
                                                 ? hasSaved
                                                     ? "Открыть результат"
                                                     : "Выполнить расчёт"
-                                                : `Купить за ${product.price_rub} ₽`}
+                                                : purchased
+                                                    ? "Открыть результат"
+                                                    : `Купить за ${product.price_rub} ₽`}
                                     </button>
                                 </div>
                             );
