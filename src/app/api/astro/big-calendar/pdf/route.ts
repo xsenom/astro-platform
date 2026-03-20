@@ -41,28 +41,41 @@ export async function POST(req: NextRequest) {
             throw new RouteError("Недостаточно данных для сборки PDF.", 400);
         }
 
-        const form = new URLSearchParams({
+        const payload = {
             content,
             general_p2: summary,
             name,
             birth_date: formatBirthDate(birthDate),
             birth_time: birthTime,
-        });
+        };
 
-        const response = await fetch(PDF_RENDER_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            },
-            body: form.toString(),
-        });
+        const requestPdf = async (mode: "json" | "form") =>
+            fetch(PDF_RENDER_URL, {
+                method: "POST",
+                headers:
+                    mode === "json"
+                        ? { "Content-Type": "application/json" }
+                        : { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+                body:
+                    mode === "json"
+                        ? JSON.stringify(payload)
+                        : new URLSearchParams(payload).toString(),
+            });
+
+        const primaryResponse = await requestPdf("json");
+        const response =
+            primaryResponse.status === 415 || primaryResponse.status === 422
+                ? await requestPdf("form")
+                : primaryResponse;
 
         if (!response.ok) {
             const errorText = await response.text().catch(() => "");
             const message =
                 response.status === 403
                     ? `Сервис PDF отклонил запрос (403 Forbidden). Проверьте доступ сервера к ${PDF_RENDER_URL}.`
-                    : errorText || `HTTP ${response.status}`;
+                    : response.status === 422
+                        ? "Сервис PDF вернул 422 Unprocessable Entity. Проверьте формат content/general_p2/name/birth_date/birth_time."
+                        : errorText || `HTTP ${response.status}`;
             throw new RouteError(
                 message,
                 response.status >= 400 && response.status < 600 ? response.status : 502

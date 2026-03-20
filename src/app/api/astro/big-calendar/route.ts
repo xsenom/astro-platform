@@ -106,51 +106,73 @@ async function createOpenAIText(prompt: string, input: unknown, maxTokens: numbe
     return text;
 }
 
+async function requestCalendar(
+    payload: Record<string, string>,
+    mode: "json" | "form"
+) {
+    const response = await fetch(BIG_CALENDAR_API_URL, {
+        method: "POST",
+        headers:
+            mode === "json"
+                ? { "Content-Type": "application/json" }
+                : { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body:
+            mode === "json"
+                ? JSON.stringify(payload)
+                : new URLSearchParams(payload).toString(),
+    });
+
+    const contentType = response.headers.get("content-type") || "";
+    const isJson = contentType.includes("application/json");
+    const data = isJson
+        ? await response.json().catch(() => null)
+        : await response.text().catch(() => "");
+
+    return { response, data, isJson };
+}
+
 async function fetchCalendar(
     body: Required<Pick<RequestBody, "birthDate" | "birthTime" | "birthPlace">> & {
         months: number;
     }
 ) {
-    const form = new URLSearchParams({
+    const payload = {
         birth_date: body.birthDate,
         birth_time: body.birthTime,
         birth_place: body.birthPlace,
         months: String(body.months),
-    });
+    };
 
-    const response = await fetch(BIG_CALENDAR_API_URL, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-        },
-        body: form.toString(),
-    });
+    const primary = await requestCalendar(payload, "json");
+    const shouldFallback = primary.response.status === 415 || primary.response.status === 422;
+    const result = shouldFallback ? await requestCalendar(payload, "form") : primary;
 
-    const contentType = response.headers.get("content-type") || "";
-    const isJson = contentType.includes("application/json");
-    const payload = isJson
-        ? await response.json().catch(() => null)
-        : await response.text().catch(() => "");
-
-    if (!response.ok) {
+    if (!result.response.ok) {
         const detail =
-            typeof payload === "string"
-                ? payload.trim() || `HTTP ${response.status}`
-                : payload?.detail || payload?.message || `HTTP ${response.status}`;
+            typeof result.data === "string"
+                ? result.data.trim() || `HTTP ${result.response.status}`
+                : result.data?.detail || result.data?.message || `HTTP ${result.response.status}`;
 
         const message =
-            response.status === 403
+            result.response.status === 403
                 ? `Внешний сервис БЖК отклонил запрос (403 Forbidden). Проверьте доступ сервера к ${BIG_CALENDAR_API_URL}.`
-                : `Не удалось получить данные БЖК: ${detail}`;
+                : result.response.status === 422
+                    ? `Сервис БЖК вернул 422 Unprocessable Entity. Проверьте формат полей birth_date, birth_time, birth_place и months.`
+                    : `Не удалось получить данные БЖК: ${detail}`;
 
-        throw new RouteError(message, response.status >= 400 && response.status < 600 ? response.status : 502);
+        throw new RouteError(
+            message,
+            result.response.status >= 400 && result.response.status < 600
+                ? result.response.status
+                : 502
+        );
     }
 
-    if (!isJson || !payload || typeof payload !== "object") {
+    if (!result.isJson || !result.data || typeof result.data !== "object") {
         throw new RouteError("Сервис БЖК вернул неожиданный ответ вместо JSON.", 502);
     }
 
-    return payload;
+    return result.data;
 }
 
 export async function POST(req: NextRequest) {
