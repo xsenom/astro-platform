@@ -28,6 +28,10 @@ function getSmtpConfig() {
     return { host, port, username, password, secure };
 }
 
+function isForecastKind(kind: string | null | undefined) {
+    return ["day", "week", "month", "big_calendar"].includes(String(kind || "").trim());
+}
+
 function getCalcLabel(kind: string) {
     const labels: Record<string, string> = {
         natal: "Натальная карта",
@@ -95,7 +99,9 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, calculations: data ?? [] });
+    const calculations = (data ?? []).filter((calc) => isForecastKind(calc.kind));
+
+    return NextResponse.json({ ok: true, calculations });
 }
 
 export async function POST(req: NextRequest) {
@@ -140,6 +146,10 @@ export async function POST(req: NextRequest) {
 
         if (!calc) {
             return NextResponse.json({ ok: false, error: "Расчёт не найден." }, { status: 404 });
+        }
+
+        if (!isForecastKind(calc.kind)) {
+            return NextResponse.json({ ok: false, error: "Бесплатно можно отправлять только сохранённые прогнозы." }, { status: 400 });
         }
 
         const from = getEnv("SMTP_FROM");
