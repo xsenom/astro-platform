@@ -151,6 +151,8 @@ export default function CalculationsPage() {
         error: null,
         model: null,
     });
+    const [activeNatalInterpretationTitle, setActiveNatalInterpretationTitle] =
+        useState<string | null>(null);
 
     const targetDate = toYMD(new Date());
 
@@ -173,6 +175,17 @@ export default function CalculationsPage() {
     }, [dateParts, timeParts, profile?.birth_city]);
 
     const canRun = missingFields.length === 0;
+    const natalInterpretationSections = useMemo(
+        () =>
+            result?.kind === "natal" && interpretation.text
+                ? extractMarkdownSections(interpretation.text)
+                : [],
+        [result?.kind, interpretation.text]
+    );
+    const activeNatalInterpretationSection =
+        natalInterpretationSections.find(
+            (section) => section.title === activeNatalInterpretationTitle
+        ) ?? natalInterpretationSections[0] ?? null;
 
     useEffect(() => {
         if (!loading || !activeKind) return;
@@ -1117,6 +1130,49 @@ export default function CalculationsPage() {
                         );
                     })}
                 </div>
+
+                {result?.kind === "natal" && !!natalInterpretationSections.length && (
+                    <div
+                        style={{
+                            marginTop: 16,
+                            display: "grid",
+                            gap: 8,
+                            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                        }}
+                    >
+                        {natalInterpretationSections.map((section) => {
+                            const active =
+                                section.title === (activeNatalInterpretationSection?.title ?? null);
+
+                            return (
+                                <button
+                                    key={section.title}
+                                    onClick={() => setActiveNatalInterpretationTitle(section.title)}
+                                    style={{
+                                        textAlign: "left",
+                                        borderRadius: 16,
+                                        padding: "14px 16px",
+                                        border: active
+                                            ? "1px solid rgba(214,244,157,.38)"
+                                            : "1px solid rgba(214,244,157,.18)",
+                                        background: active
+                                            ? "linear-gradient(180deg, rgba(174,210,113,.28), rgba(124,159,75,.34))"
+                                            : "linear-gradient(180deg, rgba(174,210,113,.18), rgba(124,159,75,.24))",
+                                        color: "rgba(255,255,255,.96)",
+                                        fontWeight: 900,
+                                        cursor: "pointer",
+                                        lineHeight: 1.4,
+                                        boxShadow: active
+                                            ? "0 10px 30px rgba(109, 141, 56, .22)"
+                                            : "none",
+                                    }}
+                                >
+                                    {section.title}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
 
             {err && (
@@ -1205,7 +1261,12 @@ export default function CalculationsPage() {
                             {!interpretation.loading && interpretation.error && <div style={{ color: "rgba(255,210,160,.9)", lineHeight: 1.6 }}>{interpretation.error}</div>}
                             {!interpretation.loading && interpretation.text && (
                                 result.kind === "natal" ? (
-                                    <NatalInterpretationSections text={interpretation.text} />
+                                    <MarkdownCard
+                                        text={
+                                            activeNatalInterpretationSection?.body.join("\n").trim() ||
+                                            interpretation.text
+                                        }
+                                    />
                                 ) : (
                                     <MarkdownCard text={interpretation.text} />
                                 )
@@ -1345,70 +1406,6 @@ function collectLines(lines: string[], marker: string) {
         if (line.startsWith("•")) items.push(line);
     }
     return items;
-}
-
-function NatalInterpretationSections({ text }: { text: string }) {
-    const sections = useMemo(() => extractMarkdownSections(text), [text]);
-    const [activeTitle, setActiveTitle] = useState<string | null>(sections[0]?.title ?? null);
-
-    if (!sections.length) {
-        return <MarkdownCard text={text} />;
-    }
-
-    const activeSection =
-        sections.find((section) => section.title === activeTitle) ?? sections[0];
-
-    return (
-        <div style={{ display: "grid", gap: 12 }}>
-            <div
-                style={{
-                    display: "grid",
-                    gap: 8,
-                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                }}
-            >
-                {sections.map((section) => {
-                    const active = section.title === activeSection.title;
-
-                    return (
-                        <button
-                            key={section.title}
-                            onClick={() => setActiveTitle(section.title)}
-                            style={{
-                                textAlign: "left",
-                                borderRadius: 16,
-                                padding: "14px 16px",
-                                border: active
-                                    ? "1px solid rgba(214,244,157,.38)"
-                                    : "1px solid rgba(214,244,157,.18)",
-                                background: active
-                                    ? "linear-gradient(180deg, rgba(174,210,113,.28), rgba(124,159,75,.34))"
-                                    : "linear-gradient(180deg, rgba(174,210,113,.18), rgba(124,159,75,.24))",
-                                color: "rgba(255,255,255,.96)",
-                                fontWeight: 900,
-                                cursor: "pointer",
-                                lineHeight: 1.4,
-                                boxShadow: active ? "0 10px 30px rgba(109, 141, 56, .22)" : "none",
-                            }}
-                        >
-                            {section.title}
-                        </button>
-                    );
-                })}
-            </div>
-
-            <div
-                style={{
-                    padding: 16,
-                    borderRadius: 18,
-                    border: "1px solid rgba(214,244,157,.18)",
-                    background: "rgba(214,244,157,.08)",
-                }}
-            >
-                <MarkdownCard text={activeSection.body.join("\n").trim()} />
-            </div>
-        </div>
-    );
 }
 
 function MarkdownCard({ text }: { text: string }) {
