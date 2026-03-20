@@ -63,6 +63,15 @@ type SavedCalculationOption = {
     result_text: string;
 };
 
+type EditorCalculationOption = {
+    id: string;
+    source: "saved" | "queue";
+    kind: string;
+    target_date: string | null;
+    updated_at: string | null;
+    status: string | null;
+};
+
 type SupportThreadRow = {
     id: string;
     created_at: string;
@@ -434,7 +443,7 @@ export default function AdminPage() {
     const [editorError, setEditorError] = useState<string | null>(null);
     const [editorState, setEditorState] = useState<UserEditorState | null>(null);
     const [editorSelectedCalcId, setEditorSelectedCalcId] = useState<string>("");
-    const [editorCalculations, setEditorCalculations] = useState<SavedCalculationOption[]>([]);
+    const [editorCalculations, setEditorCalculations] = useState<EditorCalculationOption[]>([]);
     const [editorCalculationsLoading, setEditorCalculationsLoading] = useState(false);
     const [editorCalcSending, setEditorCalcSending] = useState(false);
     const [usersPagination, setUsersPagination] = useState<UsersPagination>({
@@ -547,6 +556,13 @@ export default function AdminPage() {
     const editorAvailableCalcs = useMemo(
         () =>
             [...editorCalculations].sort((a, b) => {
+                const aSaved = a.source === "saved";
+                const bSaved = b.source === "saved";
+
+                if (aSaved !== bSaved) {
+                    return aSaved ? -1 : 1;
+                }
+
                 const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
                 const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
                 return bTime - aTime;
@@ -701,9 +717,33 @@ export default function AdminPage() {
                 throw new Error(json?.error || "Не удалось загрузить расчёты пользователя.");
             }
 
-            const calculations = Array.isArray(json.calculations) ? (json.calculations as SavedCalculationOption[]) : [];
-            setEditorCalculations(calculations);
-            setEditorSelectedCalcId(calculations[0]?.id || "");
+            const savedCalculations = Array.isArray(json.calculations) ? (json.calculations as SavedCalculationOption[]) : [];
+            const queuedForecasts = calcs
+                .filter((calc) => calc.user_id === userId)
+                .filter((calc) => ["day", "week", "month", "big_calendar"].includes(String(calc.calc_type_id || "").trim()))
+                .map((calc) => ({
+                    id: calc.id,
+                    source: "queue" as const,
+                    kind: String(calc.calc_type_id || "").trim(),
+                    target_date: null,
+                    updated_at: calc.updated_at,
+                    status: calc.status,
+                }));
+
+            const mergedCalculations = [
+                ...savedCalculations.map((calc) => ({
+                    id: calc.id,
+                    source: "saved" as const,
+                    kind: calc.kind,
+                    target_date: calc.target_date,
+                    updated_at: calc.updated_at,
+                    status: null,
+                })),
+                ...queuedForecasts.filter((queueCalc) => !savedCalculations.some((savedCalc) => savedCalc.kind === queueCalc.kind)),
+            ];
+
+            setEditorCalculations(mergedCalculations);
+            setEditorSelectedCalcId(mergedCalculations[0]?.id || "");
         } catch (e) {
             setEditorCalculations([]);
             setEditorSelectedCalcId("");
@@ -815,24 +855,53 @@ export default function AdminPage() {
                 return;
             }
 
-            const res = await fetch("/api/admin/user-calculations", {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    userId: editorState.id,
-                    calcId: editorSelectedCalcId,
-                }),
-            });
-
-            const json = await res.json().catch(() => null);
-            if (!res.ok || !json?.ok) {
-                throw new Error(json?.error || "Не удалось отправить расчёт клиенту.");
+            const selectedCalc = editorAvailableCalcs.find((calc) => calc.id === editorSelectedCalcId) ?? null;
+            if (!selectedCalc) {
+                throw new Error("Выбери прогноз для отправки.");
             }
 
-            setEditorMessage(json?.message || "Расчёт отправлен клиенту на email.");
+            if (selectedCalc.source === "saved") {
+                const res = await fetch("/api/admin/user-calculations", {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        userId: editorState.id,
+                        calcId: editorSelectedCalcId,
+                    }),
+                });
+
+                const json = await res.json().catch(() => null);
+                if (!res.ok || !json?.ok) {
+                    throw new Error(json?.error || "Не удалось отправить расчёт клиенту.");
+                }
+
+                setEditorMessage(json?.message || "Расчёт отправлен клиенту на email.");
+            } else {
+                const res = await fetch("/api/admin/restart-calc", {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        calc_id: editorSelectedCalcId,
+                    }),
+                });
+
+                const json = await res.json().catch(() => null);
+                if (!res.ok || !json?.ok) {
+                    throw new Error(json?.error || "Не удалось поставить прогноз в очередь.");
+                }
+
+                setEditorMessage("Сохранённого прогноза не нашли, поэтому поставили существующий расчёт в очередь на бесплатную повторную отправку.");
+                setCalcs((prev) => prev.map((calc) => (calc.id === editorSelectedCalcId ? { ...calc, status: "queued" } : calc)));
+                setEditorCalculations((prev) =>
+                    prev.map((calc) => (calc.id === editorSelectedCalcId && calc.source === "queue" ? { ...calc, status: "queued" } : calc))
+                );
+            }
         } catch (e) {
             setEditorError(e instanceof Error ? e.message : "Не удалось отправить расчёт клиенту.");
         } finally {
@@ -1605,7 +1674,7 @@ export default function AdminPage() {
                         >
                             <div style={{ fontWeight: 900 }}>Отправить готовый расчёт клиенту</div>
                             <div style={{ fontSize: 12, opacity: 0.75 }}>
-                                Выбери любой готовый прогноз из уже сохранённых и отправь его клиенту бесплатно, без повторного запуска расчёта.
+                                Сначала показываем уже сохранённые прогнозы для бесплатной мгновенной отправки. Если сохранённого прогноза нет, можно выбрать существующий расчёт и поставить его в очередь на повторную бесплатную отправку.
                             </div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
                                 <select
@@ -1622,6 +1691,7 @@ export default function AdminPage() {
                                         editorAvailableCalcs.map((calc) => (
                                             <option key={calc.id} value={calc.id}>
                                                 {getCalculationLabel(String(calc.kind || ""))}
+                                                {calc.source === "saved" ? " • сохранён" : " • из очереди"}
                                                 {calc.target_date ? ` • ${calc.target_date}` : ""}
                                                 {calc.updated_at ? ` • ${new Date(calc.updated_at).toLocaleDateString("ru-RU")}` : ""}
                                             </option>
