@@ -198,18 +198,6 @@ function getCalculationLabel(kind: string) {
     return labels[kind] ?? kind;
 }
 
-function getMostRecentCalculationId(calculations: CalculationRow[]) {
-    if (!calculations.length) return "";
-
-    const sorted = [...calculations].sort((a, b) => {
-        const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
-        const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
-        return bTime - aTime;
-    });
-
-    return sorted[0]?.id || "";
-}
-
 const DEFAULT_BUILDER_STATE: BuilderState = {
     preheader: "Короткий анонс письма, который увидят в превью.",
     title: "Заголовок письма",
@@ -446,6 +434,8 @@ export default function AdminPage() {
     const [editorError, setEditorError] = useState<string | null>(null);
     const [editorState, setEditorState] = useState<UserEditorState | null>(null);
     const [editorSelectedCalcId, setEditorSelectedCalcId] = useState<string>("");
+    const [editorCalculations, setEditorCalculations] = useState<SavedCalculationOption[]>([]);
+    const [editorCalculationsLoading, setEditorCalculationsLoading] = useState(false);
     const [editorCalcSending, setEditorCalcSending] = useState(false);
     const [usersPagination, setUsersPagination] = useState<UsersPagination>({
         page: 1,
@@ -556,16 +546,12 @@ export default function AdminPage() {
     );
     const editorAvailableCalcs = useMemo(
         () =>
-            editorState
-                ? calcs
-                    .filter((calc) => calc.user_id === editorState.id)
-                    .sort((a, b) => {
-                        const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
-                        const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
-                        return bTime - aTime;
-                    })
-                : [],
-        [calcs, editorState]
+            [...editorCalculations].sort((a, b) => {
+                const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+                const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+                return bTime - aTime;
+            }),
+        [editorCalculations]
     );
 
     function scrollToBottom() {
@@ -730,7 +716,8 @@ export default function AdminPage() {
     function openUserEditor(profile: ProfileRow) {
         setEditorError(null);
         setEditorMessage(null);
-        setEditorSelectedCalcId(getMostRecentCalculationId(calcs.filter((calc) => calc.user_id === profile.id)));
+        setEditorCalculations([]);
+        setEditorSelectedCalcId("");
         setEditorState({
             id: profile.id,
             email: profile.email || "",
@@ -740,14 +727,7 @@ export default function AdminPage() {
             birth_city: profile.birth_city || "",
         });
         setEditorOpen(true);
-        const userCalcs = calcs
-            .filter((calc) => calc.user_id === profile.id)
-            .sort((a, b) => {
-                const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
-                const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
-                return bTime - aTime;
-            });
-        setEditorSelectedCalcId(userCalcs[0]?.id || "");
+        void loadUserCalculations(profile.id);
     }
 
 
@@ -758,6 +738,7 @@ export default function AdminPage() {
         setEditorMessage(null);
         setEditorState(null);
         setEditorSelectedCalcId("");
+        setEditorCalculations([]);
     }
 
     async function saveUserEditor() {
@@ -834,26 +815,26 @@ export default function AdminPage() {
                 return;
             }
 
-            const res = await fetch("/api/admin/restart-calc", {
+            const res = await fetch("/api/admin/user-calculations", {
                 method: "POST",
                 headers: {
                     Authorization: `Bearer ${token}`,
                     "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                    calc_id: editorSelectedCalcId,
+                    userId: editorState.id,
+                    calcId: editorSelectedCalcId,
                 }),
             });
 
             const json = await res.json().catch(() => null);
             if (!res.ok || !json?.ok) {
-                throw new Error(json?.error || "Не удалось поставить расчёт в очередь.");
+                throw new Error(json?.error || "Не удалось отправить расчёт клиенту.");
             }
 
-            await loadSummary();
-            setEditorMessage("Расчёт поставлен в очередь. После обработки он автоматически уйдёт клиенту на почту.");
+            setEditorMessage(json?.message || "Расчёт отправлен клиенту на email.");
         } catch (e) {
-            setEditorError(e instanceof Error ? e.message : "Не удалось поставить расчёт в очередь.");
+            setEditorError(e instanceof Error ? e.message : "Не удалось отправить расчёт клиенту.");
         } finally {
             setEditorCalcSending(false);
         }
@@ -1624,25 +1605,25 @@ export default function AdminPage() {
                         >
                             <div style={{ fontWeight: 900 }}>Отправить готовый расчёт клиенту</div>
                             <div style={{ fontSize: 12, opacity: 0.75 }}>
-                                Можно выбрать любой готовый расчёт пользователя и сразу отправить его на email клиента.
+                                Выбери любой готовый прогноз из уже сохранённых и отправь его клиенту бесплатно, без повторного запуска расчёта.
                             </div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
                                 <select
                                     value={editorSelectedCalcId}
                                     onChange={(e) => setEditorSelectedCalcId(e.target.value)}
-                                    disabled={editorCalcSending || !editorAvailableCalcs.length}
+                                    disabled={editorCalcSending || editorCalculationsLoading || !editorAvailableCalcs.length}
                                     style={editorInputStyle}
                                 >
                                     {!editorAvailableCalcs.length ? (
                                         <option value="">
-                                            Нет доступных расчётов
+                                            {editorCalculationsLoading ? "Загружаем прогнозы..." : "Нет доступных прогнозов"}
                                         </option>
                                     ) : (
                                         editorAvailableCalcs.map((calc) => (
                                             <option key={calc.id} value={calc.id}>
-                                                {getCalculationLabel(String(calc.calc_type_id || ""))}
+                                                {getCalculationLabel(String(calc.kind || ""))}
+                                                {calc.target_date ? ` • ${calc.target_date}` : ""}
                                                 {calc.updated_at ? ` • ${new Date(calc.updated_at).toLocaleDateString("ru-RU")}` : ""}
-                                                {calc.status ? ` • ${calc.status}` : ""}
                                             </option>
                                         ))
                                     )}
