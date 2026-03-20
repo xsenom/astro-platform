@@ -1,213 +1,48 @@
 "use client";
 
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-    type CSSProperties,
-} from "react";
+    AnimatedDots,
+    AstroLoading,
+    MarkdownCard,
+    NatalResultView,
+} from "@/components/cabinet/calculations/display";
+import {
+    bigCalendarCardStyle,
+    bigCalendarDescriptionStyle,
+    bigCalendarTagsRowStyle,
+    bigCalendarTitleStyle,
+    bigCalendarTopRowStyle,
+    btn,
+    cardDescriptionStyle,
+    cardTagsRowStyle,
+    cardTitleStyle,
+    cardTopRowStyle,
+    productCardStyle,
+    tagStyle,
+    topBadgeStyle,
+} from "@/components/cabinet/calculations/styles";
+import type {
+    AccessRow,
+    AdminState,
+    ApiResult,
+    BirthProfile,
+    CalcKind,
+    InterpretationState,
+    ProductRow,
+    SavedCalculationRow,
+} from "@/components/cabinet/calculations/types";
+import {
+    extractMarkdownSections,
+    formatExpiration,
+    getExpirationDate,
+    isSavedCalculationActive,
+    loadingLabels,
+    parseBirthDate,
+    parseBirthTime,
+    toYMD,
+} from "@/components/cabinet/calculations/utils";
 import { supabase } from "@/lib/supabase/client";
-
-type CalcKind = "natal" | "day" | "week" | "month" | "big_calendar";
-
-type ApiResult =
-    | { kind: "natal"; text: string; meta?: any }
-    | { kind: "day"; text: string; raw?: any }
-    | { kind: "week"; text: string; raw?: any }
-    | { kind: "month"; text: string; raw?: any }
-    | { kind: "big_calendar"; text: string; raw?: any };
-
-type BirthProfile = {
-    birth_date: string | null;
-    birth_time: string | null;
-    birth_city: string | null;
-};
-
-type ProductRow = {
-    code: CalcKind;
-    title: string;
-    description: string | null;
-    price_rub: number;
-    is_free: boolean;
-    is_active: boolean;
-    sort_order: number;
-};
-
-type AccessRow = {
-    product_code: CalcKind;
-};
-
-type SavedCalculationRow = {
-    id: string;
-    kind: CalcKind;
-    target_date: string | null;
-
-    result_text: string;
-    result_json: any;
-    input_params: any;
-    updated_at: string;
-
-    interpretation_text?: string | null;
-    interpretation_model?: string | null;
-    interpretation_updated_at?: string | null;
-
-    pdf_url?: string | null;
-    pdf_path?: string | null;
-    file_name?: string | null;
-};
-
-
-
-type AdminState = {
-    isAdmin: boolean;
-    isSuper: boolean;
-};
-
-type InterpretationState = {
-    loading: boolean;
-    text: string | null;
-    error: string | null;
-    model: string | null;
-};
-
-type MarkdownSection = {
-    title: string;
-    body: string[];
-};
-
-function pad2(n: number) {
-    return String(n).padStart(2, "0");
-}
-
-function toYMD(d: Date) {
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
-function parseBirthDate(value: string | null) {
-    if (!value) return null;
-    const [y, m, d] = value.split("-").map((x) => Number.parseInt(x, 10));
-    if (!y || !m || !d) return null;
-    return { year: y, month: m, day: d };
-}
-
-function parseBirthTime(value: string | null) {
-    if (!value) return null;
-    const [h, min] = value.split(":").map((x) => Number.parseInt(x, 10));
-    if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
-
-    return {
-        hour: String(h).padStart(2, "0"),
-        minute: String(min).padStart(2, "0"),
-    };
-}
-
-function parseYmdToLocalDate(value: string | null) {
-    if (!value) return null;
-    const [y, m, d] = value.split("-").map((x) => Number.parseInt(x, 10));
-    if (!y || !m || !d) return null;
-    return new Date(y, m - 1, d, 0, 0, 0, 0);
-}
-
-function addDays(date: Date, days: number) {
-    const next = new Date(date);
-    next.setDate(next.getDate() + days);
-    return next;
-}
-
-function endOfDay(date: Date) {
-    const next = new Date(date);
-    next.setHours(23, 59, 59, 999);
-    return next;
-}
-
-function getRowAnchorDate(row: SavedCalculationRow) {
-    const byTargetDate = parseYmdToLocalDate(row.target_date ?? null);
-    if (byTargetDate) return byTargetDate;
-
-    const byUpdatedAt = new Date(row.updated_at);
-    if (Number.isNaN(byUpdatedAt.getTime())) return null;
-
-    return new Date(
-        byUpdatedAt.getFullYear(),
-        byUpdatedAt.getMonth(),
-        byUpdatedAt.getDate(),
-        0,
-        0,
-        0,
-        0
-    );
-}
-
-function getExpirationDate(row: SavedCalculationRow) {
-    if (row.kind === "natal") return null;
-
-    const anchor = getRowAnchorDate(row);
-    if (!anchor) return null;
-
-    if (row.kind === "day") {
-        return endOfDay(anchor);
-    }
-
-    if (row.kind === "week") {
-        return endOfDay(addDays(anchor, 6));
-    }
-
-    if (row.kind === "month") {
-        return endOfDay(addDays(anchor, 29));
-    }
-
-    if (row.kind === "big_calendar") {
-        return endOfDay(addDays(anchor, 60));
-    }
-
-    return null;
-}
-
-function isSavedCalculationActive(row: SavedCalculationRow, now: Date) {
-    if (row.kind === "natal") return true;
-
-    const expiresAt = getExpirationDate(row);
-    if (!expiresAt) return false;
-
-    return now.getTime() <= expiresAt.getTime();
-}
-
-function formatExpiration(kind: CalcKind) {
-    if (kind === "day") return "до 23:59 текущего дня";
-    if (kind === "week") return "6 дней после даты прогноза";
-    if (kind === "month") return "29 дней после даты прогноза";
-    if (kind === "big_calendar") return "60 дней после даты прогноза";
-    return "без ограничения";
-}
-
-const loadingLabels: Record<CalcKind, string[]> = {
-    natal: [
-        "Строим натальную карту",
-        "Собираем положения планет",
-        "Формируем интерпретацию",
-    ],
-    day: [
-        "Открываем сохранённый прогноз на день",
-        "Проверяем срок хранения результата",
-        "Подготавливаем отображение",
-    ],
-    week: [
-        "Открываем сохранённый прогноз на неделю",
-        "Проверяем срок хранения результата",
-        "Подготавливаем отображение",
-    ],
-    month: [
-        "Открываем сохранённый прогноз на месяц",
-        "Проверяем срок хранения результата",
-        "Подготавливаем отображение",
-    ],
-    big_calendar: [
-        "Открываем большой женский календарь",
-        "Проверяем срок хранения результата",
-        "Подготавливаем PDF и отображение",
-    ],
-};
 
 export default function CalculationsPage() {
     const API =
@@ -271,6 +106,55 @@ export default function CalculationsPage() {
         () => parseBirthTime(profile?.birth_time ?? null),
         [profile?.birth_time]
     );
+
+    function resetResultState() {
+        setErr(null);
+        setResult(null);
+        setResultMeta({ source: null, updatedAt: null, expiresAt: null });
+        setInterpretation({
+            loading: false,
+            text: null,
+            error: null,
+            model: null,
+        });
+    }
+
+    async function downloadBigCalendarPdf(pdfPayload: Record<string, unknown>) {
+        const res = await fetch("/api/astro/big-calendar/pdf", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(pdfPayload),
+        });
+
+        if (!res.ok) {
+            const json = await res.json().catch(() => null);
+            throw new Error(json?.error || "Не удалось собрать PDF-файл.");
+        }
+
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        const fileName =
+            typeof pdfPayload.file_name === "string" && pdfPayload.file_name.trim()
+                ? pdfPayload.file_name.trim()
+                : `БЖК_${profile?.birth_date ?? targetDate}.pdf`;
+
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+    }
+
+
+    async function handleBigCalendarPdfDownload(pdfPayload: Record<string, unknown>) {
+        try {
+            await downloadBigCalendarPdf(pdfPayload);
+        } catch (e: any) {
+            setErr(e?.message || "Не удалось скачать PDF-файл.");
+        }
+    }
 
     async function saveInterpretation(params: {
         kind: CalcKind;
@@ -875,15 +759,7 @@ export default function CalculationsPage() {
     async function openPurchasedResult(kind: Exclude<CalcKind, "natal">) {
         setLoading(true);
         setActiveKind(kind);
-        setErr(null);
-        setResult(null);
-        setResultMeta({ source: null, updatedAt: null, expiresAt: null });
-        setInterpretation({
-            loading: false,
-            text: null,
-            error: null,
-            model: null,
-        });
+        resetResultState();
 
         try {
             if (showSaved(kind)) return;
@@ -962,15 +838,7 @@ export default function CalculationsPage() {
 
         setLoading(true);
         setActiveKind("natal");
-        setErr(null);
-        setResult(null);
-        setResultMeta({ source: null, updatedAt: null, expiresAt: null });
-        setInterpretation({
-            loading: false,
-            text: null,
-            error: null,
-            model: null,
-        });
+        resetResultState();
 
         try {
             if (showSaved("natal")) return;
@@ -1032,6 +900,93 @@ export default function CalculationsPage() {
         }
     }
 
+    async function runBigCalendar() {
+        if (!requireProfile()) return;
+
+        setLoading(true);
+        setActiveKind("big_calendar");
+        resetResultState();
+
+        try {
+            if (showSaved("big_calendar")) return;
+
+            const res = await fetch("/api/astro/big-calendar", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    birthDate: profile?.birth_date,
+                    birthTime: profile?.birth_time,
+                    birthPlace: profile?.birth_city,
+                    months: 3,
+                }),
+            });
+
+            const json = await res.json().catch(() => null);
+            if (!res.ok) {
+                throw new Error(json?.error || "Не удалось сформировать большой женский календарь.");
+            }
+
+            const pdfPayload = {
+                ...(json?.pdfPayload || {}),
+                file_name: `БЖК_${profile?.birth_date ?? targetDate}.pdf`,
+            };
+
+            setResult({
+                kind: "big_calendar",
+                text: json?.reportText || "Пустой ответ",
+                raw: {
+                    ...(json?.rawCalendar || {}),
+                    pdf_payload: pdfPayload,
+                },
+            });
+
+            setResultMeta({ source: "fresh", updatedAt: null, expiresAt: null });
+            setInterpretation({
+                loading: false,
+                text: json?.summaryText || null,
+                error: null,
+                model: json?.model || null,
+            });
+
+            const savedRow = await saveCalculation({
+                kind: "big_calendar",
+                resultText: json?.reportText || "Пустой ответ",
+                resultJson: {
+                    ...(json?.rawCalendar || {}),
+                    pdf_payload: pdfPayload,
+                    summary_text: json?.summaryText || null,
+                },
+                inputParams: {
+                    birth_date: profile?.birth_date,
+                    birth_time: profile?.birth_time,
+                    birth_city: profile?.birth_city,
+                    months: 3,
+                },
+            });
+
+            const interpretedSavedRow = json?.summaryText
+                ? await saveInterpretation({
+                    kind: "big_calendar",
+                    interpretationText: json.summaryText,
+                    interpretationModel: json?.model || null,
+                })
+                : null;
+
+            const nextSavedRow = interpretedSavedRow || savedRow;
+            if (nextSavedRow) {
+                setSavedMap((prev) => ({
+                    ...prev,
+                    big_calendar: nextSavedRow,
+                }));
+            }
+        } catch (e: any) {
+            setErr(e?.message || "Не удалось сформировать большой женский календарь");
+        } finally {
+            setLoading(false);
+            setActiveKind(null);
+        }
+    }
+
     async function openPayment(kind: "day" | "week" | "month" | "big_calendar") {
         try {
             setErr(null);
@@ -1079,6 +1034,11 @@ export default function CalculationsPage() {
 
         if (!isPurchased(kind)) {
             void openPayment(kind);
+            return;
+        }
+
+        if (kind === "big_calendar") {
+            void runBigCalendar();
             return;
         }
 
@@ -1412,25 +1372,37 @@ export default function CalculationsPage() {
                                 ))}
                         </div>
 
-                        {"raw" in result && result.raw?.pdf_url && (
-                            <a
-                                href={result.raw.pdf_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{
-                                    display: "inline-block",
-                                    width: "fit-content",
-                                    borderRadius: 14,
-                                    padding: "11px 13px",
-                                    border: "1px solid rgba(224,197,143,.18)",
-                                    background: "rgba(224,197,143,.10)",
-                                    color: "rgba(245,240,233,.92)",
-                                    fontWeight: 950,
-                                    textDecoration: "none",
-                                }}
-                            >
-                                Скачать PDF
-                            </a>
+                        {"raw" in result && (result.raw?.pdf_url || result.raw?.pdf_payload) && (
+                            result.raw?.pdf_url ? (
+                                <a
+                                    href={result.raw.pdf_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{
+                                        display: "inline-block",
+                                        width: "fit-content",
+                                        borderRadius: 14,
+                                        padding: "11px 13px",
+                                        border: "1px solid rgba(224,197,143,.18)",
+                                        background: "rgba(224,197,143,.10)",
+                                        color: "rgba(245,240,233,.92)",
+                                        fontWeight: 950,
+                                        textDecoration: "none",
+                                    }}
+                                >
+                                    Скачать PDF
+                                </a>
+                            ) : (
+                                <button
+                                    onClick={() => void handleBigCalendarPdfDownload(result.raw.pdf_payload)}
+                                    style={{
+                                        ...btn(),
+                                        width: "fit-content",
+                                    }}
+                                >
+                                    Скачать PDF
+                                </button>
+                            )
                         )}
                     </div>
                 )}
@@ -1510,672 +1482,4 @@ export default function CalculationsPage() {
             )}
         </div>
     );
-}
-
-const cardTopRowStyle: CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: "1fr auto",
-    gap: 10,
-    alignItems: "start",
-};
-
-const cardTitleStyle: CSSProperties = {
-    fontWeight: 900,
-    fontSize: 16,
-    lineHeight: 1.25,
-    minHeight: 40,
-};
-
-const cardDescriptionStyle: CSSProperties = {
-    color: "rgba(245,240,233,.72)",
-    lineHeight: 1.5,
-    minHeight: 72,
-};
-
-const cardTagsRowStyle: CSSProperties = {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-    alignItems: "center",
-    minHeight: 36,
-    marginBottom: 12,
-};
-
-function productCardStyle(): CSSProperties {
-    return {
-        padding: 16,
-        borderRadius: 18,
-        border: "1px solid rgba(224,197,143,.14)",
-        background: "rgba(10,18,38,.18)",
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 266,
-    };
-}
-
-const bigCalendarCardStyle: CSSProperties = {
-    padding: 20,
-    borderRadius: 20,
-    border: "1px solid rgba(224,197,143,.18)",
-    background: "linear-gradient(180deg, rgba(20,35,75,.26), rgba(10,18,38,.22))",
-    display: "flex",
-    flexDirection: "column",
-    minHeight: 244,
-};
-
-const bigCalendarTopRowStyle: CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: "1fr auto",
-    gap: 12,
-    alignItems: "start",
-};
-
-const bigCalendarTitleStyle: CSSProperties = {
-    fontWeight: 900,
-    fontSize: 18,
-    lineHeight: 1.25,
-    textAlign: "center",
-    minHeight: 40,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingLeft: 44,
-};
-
-const bigCalendarDescriptionStyle: CSSProperties = {
-    color: "rgba(245,240,233,.72)",
-    lineHeight: 1.5,
-    minHeight: 62,
-    textAlign: "center",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-};
-
-const bigCalendarTagsRowStyle: CSSProperties = {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 36,
-    marginBottom: 12,
-};
-
-function topBadgeStyle(mode: "free" | "bought" | "price"): CSSProperties {
-    const background =
-        mode === "free"
-            ? "rgba(90,220,150,.12)"
-            : mode === "bought"
-                ? "rgba(110,170,255,.14)"
-                : "rgba(224,197,143,.10)";
-
-    return {
-        minWidth: 114,
-        height: 34,
-        padding: "0 12px",
-        borderRadius: 999,
-        fontSize: 12,
-        fontWeight: 800,
-        border: "1px solid rgba(224,197,143,.18)",
-        background,
-        color: "rgba(245,240,233,.92)",
-        whiteSpace: "nowrap",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        textAlign: "center",
-        lineHeight: 1,
-        flexShrink: 0,
-    };
-}
-
-function AnimatedDots() {
-    const [dots, setDots] = useState(".");
-
-    useEffect(() => {
-        const timer = window.setInterval(() => {
-            setDots((prev) => {
-                if (prev === "...") return ".";
-                return prev + ".";
-            });
-        }, 450);
-
-        return () => window.clearInterval(timer);
-    }, []);
-
-    return <span>{dots}</span>;
-}
-
-function AstroLoading() {
-    const phrases = useMemo(
-        () => [
-            "Сопоставляем положения планет и раскрываем главные смыслы…",
-            "Считываем взаимосвязи планет и выделяем главное…",
-            "Изучаем астрологические акценты и формируем ваш разбор…",
-            "Соединяем положения планет в цельную картину…",
-            "Выделяем сильные акценты карты и ключевые тенденции…",
-            "Анализируем небесные влияния и собираем персональный разбор…",
-            "Рассматриваем аспекты планет и ищем важные подсказки…",
-            "Выявляем ведущие темы периода и основные энергии…",
-            "Собираем ключевые астрологические акценты вашего прогноза…",
-            "Определяем, какие влияния сейчас выходят на первый план…",
-        ],
-        []
-    );
-
-    const [phraseIndex, setPhraseIndex] = useState(() =>
-        Math.floor(Math.random() * phrases.length)
-    );
-
-    useEffect(() => {
-        const timer = window.setInterval(() => {
-            setPhraseIndex((prev) => {
-                if (phrases.length <= 1) return prev;
-
-                let next = prev;
-                while (next === prev) {
-                    next = Math.floor(Math.random() * phrases.length);
-                }
-                return next;
-            });
-        }, 3000);
-
-        return () => window.clearInterval(timer);
-    }, [phrases]);
-
-    return (
-        <div
-            style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 14,
-                color: "rgba(245,240,233,.88)",
-            }}
-        >
-            <div
-                style={{
-                    position: "relative",
-                    width: 54,
-                    height: 54,
-                    flex: "0 0 54px",
-                }}
-            >
-                <div
-                    style={{
-                        position: "absolute",
-                        inset: 0,
-                        borderRadius: "50%",
-                        border: "1px solid rgba(224,197,143,.22)",
-                        animation: "astroOrbit 5.5s linear infinite",
-                    }}
-                />
-                <div
-                    style={{
-                        position: "absolute",
-                        inset: 8,
-                        borderRadius: "50%",
-                        border: "1px solid rgba(110,170,255,.22)",
-                        animation: "astroOrbitReverse 4.2s linear infinite",
-                    }}
-                />
-                <div
-                    style={{
-                        position: "absolute",
-                        left: "50%",
-                        top: "50%",
-                        width: 10,
-                        height: 10,
-                        marginLeft: -5,
-                        marginTop: -5,
-                        borderRadius: "50%",
-                        background: "rgba(224,197,143,.95)",
-                        boxShadow: "0 0 16px rgba(224,197,143,.45)",
-                        animation: "astroPulse 1.8s ease-in-out infinite",
-                    }}
-                />
-                <div
-                    style={{
-                        position: "absolute",
-                        left: "50%",
-                        top: 1,
-                        width: 6,
-                        height: 6,
-                        marginLeft: -3,
-                        borderRadius: "50%",
-                        background: "rgba(214,244,157,.95)",
-                        boxShadow: "0 0 10px rgba(214,244,157,.35)",
-                    }}
-                />
-                <div
-                    style={{
-                        position: "absolute",
-                        right: 7,
-                        top: "50%",
-                        width: 5,
-                        height: 5,
-                        marginTop: -2.5,
-                        borderRadius: "50%",
-                        background: "rgba(110,170,255,.95)",
-                        boxShadow: "0 0 10px rgba(110,170,255,.35)",
-                    }}
-                />
-            </div>
-
-            <div style={{ display: "grid", gap: 4 }}>
-                <div style={{ fontWeight: 900 }}>Анализируем аспекты</div>
-                <div
-                    key={phraseIndex}
-                    style={{
-                        color: "rgba(245,240,233,.62)",
-                        fontSize: 14,
-                        lineHeight: 1.5,
-                        animation: "astroFade 0.45s ease",
-                    }}
-                >
-                    {phrases[phraseIndex]}
-                </div>
-            </div>
-
-            <style jsx>{`
-                @keyframes astroOrbit {
-                    from {
-                        transform: rotate(0deg);
-                    }
-                    to {
-                        transform: rotate(360deg);
-                    }
-                }
-
-                @keyframes astroOrbitReverse {
-                    from {
-                        transform: rotate(360deg);
-                    }
-                    to {
-                        transform: rotate(0deg);
-                    }
-                }
-
-                @keyframes astroPulse {
-                    0%,
-                    100% {
-                        transform: scale(0.9);
-                        opacity: 0.85;
-                    }
-                    50% {
-                        transform: scale(1.18);
-                        opacity: 1;
-                    }
-                }
-
-                @keyframes astroFade {
-                    from {
-                        opacity: 0;
-                        transform: translateY(4px);
-                    }
-                    to {
-                        opacity: 1;
-                        transform: translateY(0);
-                    }
-                }
-            `}</style>
-        </div>
-    );
-}
-
-function tagStyle(bg: string): CSSProperties {
-    return {
-        minWidth: 116,
-        height: 28,
-        padding: "0 10px",
-        borderRadius: 999,
-        fontSize: 12,
-        fontWeight: 800,
-        border: "1px solid rgba(224,197,143,.18)",
-        background: bg,
-        color: "rgba(245,240,233,.92)",
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        textAlign: "center",
-        lineHeight: 1,
-        whiteSpace: "nowrap",
-    };
-}
-
-function btn(): CSSProperties {
-    return {
-        borderRadius: 14,
-        padding: "13px 16px",
-        border: "1px solid rgba(224,197,143,.18)",
-        background: "rgba(224,197,143,.10)",
-        color: "rgba(245,240,233,.92)",
-        fontWeight: 950,
-        cursor: "pointer",
-        textAlign: "center",
-    };
-}
-
-function NatalResultView({ text }: { text: string }) {
-    const lines = text
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-
-    const facts = lines.filter((line) => /^(🌅|☊|☋)/.test(line));
-    const personal = collectLines(lines, "👤 Личные планеты:");
-    const social = collectLines(lines, "🏛 Социальные планеты:");
-    const higher = collectLines(lines, "✨ Высшие планеты:");
-
-    return (
-        <div style={{ display: "grid", gap: 14 }}>
-            {!!facts.length && (
-                <div
-                    style={{
-                        display: "grid",
-                        gap: 10,
-                        gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                    }}
-                >
-                    {facts.map((item) => (
-                        <div
-                            key={item}
-                            style={{
-                                padding: 14,
-                                borderRadius: 16,
-                                border: "1px solid rgba(224,197,143,.12)",
-                                background: "rgba(10,18,38,.18)",
-                                lineHeight: 1.6,
-                            }}
-                        >
-                            {item}
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            <PlanetSection title="Личные планеты" items={personal} />
-            <PlanetSection title="Социальные планеты" items={social} />
-            <PlanetSection title="Высшие планеты" items={higher} />
-        </div>
-    );
-}
-
-function PlanetSection({ title, items }: { title: string; items: string[] }) {
-    if (!items.length) return null;
-
-    return (
-        <div
-            style={{
-                padding: 16,
-                borderRadius: 18,
-                border: "1px solid rgba(224,197,143,.12)",
-                background: "rgba(10,18,38,.18)",
-                display: "grid",
-                gap: 10,
-            }}
-        >
-            <div style={{ fontWeight: 900, fontSize: 16 }}>{title}</div>
-            <div
-                style={{
-                    display: "grid",
-                    gap: 8,
-                    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-                }}
-            >
-                {items.map((item) => (
-                    <div
-                        key={item}
-                        style={{
-                            padding: 12,
-                            borderRadius: 14,
-                            border: "1px solid rgba(224,197,143,.10)",
-                            background: "rgba(17,34,80,.16)",
-                            lineHeight: 1.6,
-                        }}
-                    >
-                        {item.replace(/^•\s*/, "")}
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-}
-
-function collectLines(lines: string[], marker: string) {
-    const startIndex = lines.indexOf(marker);
-    if (startIndex === -1) return [];
-
-    const items: string[] = [];
-    for (let i = startIndex + 1; i < lines.length; i += 1) {
-        const line = lines[i];
-        if (/^(👤|🏛|✨)/.test(line)) break;
-        if (line.startsWith("•")) items.push(line);
-    }
-    return items;
-}
-
-function MarkdownCard({ text }: { text: string }) {
-    const blocks = useMemo(() => parseMarkdownBlocks(text), [text]);
-
-    return (
-        <div style={{ display: "grid", gap: 12, color: "rgba(245,240,233,.94)" }}>
-            {blocks.map((block, index) => {
-                if (block.type === "heading") {
-                    return (
-                        <div
-                            key={`${block.type}-${index}`}
-                            style={{ fontWeight: 900, fontSize: 18 }}
-                        >
-                            {renderInlineMarkdown(block.text)}
-                        </div>
-                    );
-                }
-
-                if (block.type === "ordered") {
-                    return (
-                        <ol
-                            key={`${block.type}-${index}`}
-                            style={{
-                                margin: 0,
-                                paddingLeft: 22,
-                                display: "grid",
-                                gap: 10,
-                                lineHeight: 1.75,
-                            }}
-                        >
-                            {block.items.map((item, itemIndex) => (
-                                <li key={`${item}-${itemIndex}`}>
-                                    {renderInlineMarkdown(item)}
-                                </li>
-                            ))}
-                        </ol>
-                    );
-                }
-
-                if (block.type === "unordered") {
-                    return (
-                        <ul
-                            key={`${block.type}-${index}`}
-                            style={{
-                                margin: 0,
-                                paddingLeft: 20,
-                                display: "grid",
-                                gap: 8,
-                                lineHeight: 1.7,
-                            }}
-                        >
-                            {block.items.map((item, itemIndex) => (
-                                <li key={`${item}-${itemIndex}`}>
-                                    {renderInlineMarkdown(item)}
-                                </li>
-                            ))}
-                        </ul>
-                    );
-                }
-
-                return (
-                    <p
-                        key={`${block.type}-${index}`}
-                        style={{ margin: 0, lineHeight: 1.75 }}
-                    >
-                        {renderInlineMarkdown(block.text)}
-                    </p>
-                );
-            })}
-        </div>
-    );
-}
-
-function renderInlineMarkdown(text: string) {
-    const normalized = text.replace(/\*\*\*/g, "**").replace(/###\s*/g, "");
-    const parts = normalized.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
-
-    return parts.map((part, index) => {
-        if (part.startsWith("**") && part.endsWith("**")) {
-            return <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>;
-        }
-
-        return <span key={`${part}-${index}`}>{part}</span>;
-    });
-}
-
-function extractMarkdownSections(text: string): MarkdownSection[] {
-    const lines = text.split("\n");
-    const sections: MarkdownSection[] = [];
-    let current: MarkdownSection | null = null;
-
-    const natalFallbackTitles = [
-        "Общий разбор",
-        "Ключевой характер",
-        "Сильные стороны",
-        "Зоны роста",
-        "Отношения",
-        "Реализация",
-    ];
-
-    for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line) continue;
-
-        const headingMatch = line.match(/^#{2,3}\s+(.+)$/);
-        if (headingMatch) {
-            current = {
-                title: headingMatch[1].replace(/\*\*/g, "").trim(),
-                body: [],
-            };
-            sections.push(current);
-            continue;
-        }
-
-        if (!current) {
-            current = { title: "Общий разбор", body: [] };
-            sections.push(current);
-        }
-
-        current.body.push(line);
-    }
-
-    if (sections.length <= 1) {
-        const fallbackSections: MarkdownSection[] = [];
-        let fallbackCurrent: MarkdownSection | null = null;
-
-        for (const rawLine of lines) {
-            const line = rawLine.trim();
-            if (!line) continue;
-
-            const normalizedLine = line
-                .replace(/^[-*]\s*/, "")
-                .replace(/\*\*/g, "")
-                .replace(/:+$/, "")
-                .trim();
-
-            const matchedTitle = natalFallbackTitles.find(
-                (title) =>
-                    normalizedLine === title ||
-                    normalizedLine.startsWith(`${title}:`) ||
-                    normalizedLine.startsWith(`${title} —`)
-            );
-
-            if (matchedTitle) {
-                fallbackCurrent = { title: matchedTitle, body: [] };
-                fallbackSections.push(fallbackCurrent);
-                continue;
-            }
-
-            if (!fallbackCurrent) {
-                fallbackCurrent = { title: "Общий разбор", body: [] };
-                fallbackSections.push(fallbackCurrent);
-            }
-
-            fallbackCurrent.body.push(line);
-        }
-
-        if (fallbackSections.length > 1) {
-            return fallbackSections;
-        }
-    }
-
-    return sections;
-}
-
-function parseMarkdownBlocks(text: string) {
-    const lines = text
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-
-    const blocks: Array<
-        | { type: "heading"; text: string }
-        | { type: "paragraph"; text: string }
-        | { type: "ordered"; items: string[] }
-        | { type: "unordered"; items: string[] }
-    > = [];
-
-    let index = 0;
-
-    while (index < lines.length) {
-        const line = lines[index];
-
-        if (/^#{1,3}\s+/.test(line)) {
-            blocks.push({ type: "heading", text: line.replace(/^#{1,3}\s+/, "") });
-            index += 1;
-            continue;
-        }
-
-        if (/^\d+\.\s+/.test(line)) {
-            const items: string[] = [];
-            while (index < lines.length && /^\d+\.\s+/.test(lines[index])) {
-                items.push(lines[index].replace(/^\d+\.\s+/, ""));
-                index += 1;
-            }
-            blocks.push({ type: "ordered", items });
-            continue;
-        }
-
-        if (/^[-•]\s+/.test(line)) {
-            const items: string[] = [];
-            while (index < lines.length && /^[-•]\s+/.test(lines[index])) {
-                items.push(lines[index].replace(/^[-•]\s+/, ""));
-                index += 1;
-            }
-            blocks.push({ type: "unordered", items });
-            continue;
-        }
-
-        const paragraphLines: string[] = [];
-        while (
-            index < lines.length &&
-            !/^#{1,3}\s+/.test(lines[index]) &&
-            !/^\d+\.\s+/.test(lines[index]) &&
-            !/^[-•]\s+/.test(lines[index])
-            ) {
-            paragraphLines.push(lines[index]);
-            index += 1;
-        }
-
-        blocks.push({ type: "paragraph", text: paragraphLines.join(" ") });
-    }
-
-    return blocks;
 }
