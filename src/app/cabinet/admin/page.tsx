@@ -198,6 +198,18 @@ function getCalculationLabel(kind: string) {
     return labels[kind] ?? kind;
 }
 
+function getMostRecentCalculationId(calculations: CalculationRow[]) {
+    if (!calculations.length) return "";
+
+    const sorted = [...calculations].sort((a, b) => {
+        const aTime = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+        const bTime = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+        return bTime - aTime;
+    });
+
+    return sorted[0]?.id || "";
+}
+
 const DEFAULT_BUILDER_STATE: BuilderState = {
     preheader: "Короткий анонс письма, который увидят в превью.",
     title: "Заголовок письма",
@@ -718,8 +730,7 @@ export default function AdminPage() {
     function openUserEditor(profile: ProfileRow) {
         setEditorError(null);
         setEditorMessage(null);
-        setEditorCalculations([]);
-        setEditorSelectedCalcId("");
+        setEditorSelectedCalcId(getMostRecentCalculationId(calcs.filter((calc) => calc.user_id === profile.id)));
         setEditorState({
             id: profile.id,
             email: profile.email || "",
