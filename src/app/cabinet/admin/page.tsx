@@ -47,7 +47,6 @@ type OrderRow = {
 type CalculationRow = {
     id: string;
     user_id: string;
-    calc_type_id?: string | null;
     status: string | null;
     created_at: string | null;
     updated_at: string | null;
@@ -65,11 +64,12 @@ type SavedCalculationOption = {
 
 type EditorCalculationOption = {
     id: string;
-    source: "saved" | "queue";
+    source: "saved" | "catalog";
     kind: string;
     target_date: string | null;
     updated_at: string | null;
     status: string | null;
+    title: string | null;
 };
 
 type SupportThreadRow = {
@@ -515,7 +515,6 @@ export default function AdminPage() {
             (c) =>
                 c.id.toLowerCase().includes(s) ||
                 c.user_id.toLowerCase().includes(s) ||
-                String(c.calc_type_id || "").toLowerCase().includes(s) ||
                 (c.status || "").toLowerCase().includes(s)
         );
     }, [calcs, q]);
@@ -718,14 +717,15 @@ export default function AdminPage() {
             }
 
             const savedCalculations = Array.isArray(json.savedCalculations) ? (json.savedCalculations as SavedCalculationOption[]) : [];
-            const queuedForecasts = Array.isArray(json.queueCalculations)
-                ? (json.queueCalculations as Array<{ id: string; kind: string; status: string | null; updated_at: string | null }>).map((calc) => ({
-                      id: calc.id,
-                      source: "queue" as const,
-                      kind: calc.kind,
+            const availableForecasts = Array.isArray(json.availableForecasts)
+                ? (json.availableForecasts as Array<{ kind: string; title: string | null }>).map((forecast) => ({
+                      id: `catalog:${forecast.kind}`,
+                      source: "catalog" as const,
+                      kind: forecast.kind,
                       target_date: null,
-                      updated_at: calc.updated_at,
-                      status: calc.status,
+                      updated_at: null,
+                      status: null,
+                      title: forecast.title,
                   }))
                 : [];
 
@@ -737,8 +737,9 @@ export default function AdminPage() {
                     target_date: calc.target_date,
                     updated_at: calc.updated_at,
                     status: null,
+                    title: null,
                 })),
-                ...queuedForecasts.filter((queueCalc) => !savedCalculations.some((savedCalc) => savedCalc.kind === queueCalc.kind)),
+                ...availableForecasts.filter((forecast) => !savedCalculations.some((savedCalc) => savedCalc.kind === forecast.kind)),
             ];
 
             setEditorCalculations(mergedCalculations);
@@ -879,27 +880,7 @@ export default function AdminPage() {
 
                 setEditorMessage(json?.message || "Расчёт отправлен клиенту на email.");
             } else {
-                const res = await fetch("/api/admin/restart-calc", {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        calc_id: editorSelectedCalcId,
-                    }),
-                });
-
-                const json = await res.json().catch(() => null);
-                if (!res.ok || !json?.ok) {
-                    throw new Error(json?.error || "Не удалось поставить прогноз в очередь.");
-                }
-
-                setEditorMessage("Сохранённого прогноза не нашли, поэтому поставили существующий расчёт в очередь на бесплатную повторную отправку.");
-                setCalcs((prev) => prev.map((calc) => (calc.id === editorSelectedCalcId ? { ...calc, status: "queued" } : calc)));
-                setEditorCalculations((prev) =>
-                    prev.map((calc) => (calc.id === editorSelectedCalcId && calc.source === "queue" ? { ...calc, status: "queued" } : calc))
-                );
+                throw new Error("Для этого прогноза пока нет сохранённого результата. Сначала его нужно открыть и рассчитать в кабинете пользователя, после чего он появится здесь для бесплатной отправки.");
             }
         } catch (e) {
             setEditorError(e instanceof Error ? e.message : "Не удалось отправить расчёт клиенту.");
@@ -1673,7 +1654,7 @@ export default function AdminPage() {
                         >
                             <div style={{ fontWeight: 900 }}>Отправить готовый расчёт клиенту</div>
                             <div style={{ fontSize: 12, opacity: 0.75 }}>
-                                Сначала показываем уже сохранённые прогнозы для бесплатной мгновенной отправки. Если сохранённого прогноза нет, можно выбрать существующий расчёт и поставить его в очередь на повторную бесплатную отправку.
+                                Здесь показываются все доступные прогнозы. Сохранённые прогнозы можно сразу отправить бесплатно, а для остальных сначала нужно получить сохранённый результат в кабинете пользователя.
                             </div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
                                 <select
@@ -1689,10 +1670,11 @@ export default function AdminPage() {
                                     ) : (
                                         editorAvailableCalcs.map((calc) => (
                                             <option key={calc.id} value={calc.id}>
-                                                {getCalculationLabel(String(calc.kind || ""))}
-                                                {calc.source === "saved" ? " • сохранён" : " • из очереди"}
+                                                {calc.title || getCalculationLabel(String(calc.kind || ""))}
+                                                {calc.source === "saved" ? " • сохранён" : " • доступен"}
                                                 {calc.target_date ? ` • ${calc.target_date}` : ""}
                                                 {calc.updated_at ? ` • ${new Date(calc.updated_at).toLocaleDateString("ru-RU")}` : ""}
+                                                {calc.source === "saved" && calc.status ? ` • ${calc.status}` : ""}
                                             </option>
                                         ))
                                     )}
@@ -1813,7 +1795,7 @@ export default function AdminPage() {
                         <GridRow key={c.id} cols="170px 170px 160px 140px 160px">
                             <Mono>{c.id.slice(0, 8)}…</Mono>
                             <Mono>{c.user_id.slice(0, 8)}…</Mono>
-                            <Mono>{String(c.calc_type_id || "—")}</Mono>
+                            <Mono>—</Mono>
                             <Badge>{c.status || "—"}</Badge>
                             <button
                                 onClick={() => void restartCalc(c.id)}

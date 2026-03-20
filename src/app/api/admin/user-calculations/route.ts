@@ -89,38 +89,36 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ ok: false, error: "Укажите userId." }, { status: 400 });
     }
 
-    const [savedRes, queueRes] = await Promise.all([
+    const [savedRes, productsRes] = await Promise.all([
         getAdminClient()
             .from("saved_calculations")
             .select("id, kind, target_date, updated_at, pdf_url, file_name, result_text")
             .eq("user_id", userId)
             .order("updated_at", { ascending: false }),
         getAdminClient()
-            .from("calculations")
-            .select("id, calc_type_id, status, updated_at")
-            .eq("user_id", userId)
-            .order("updated_at", { ascending: false }),
+            .from("calculation_products")
+            .select("code, title, is_active")
+            .eq("is_active", true)
+            .order("sort_order", { ascending: true }),
     ]);
 
     if (savedRes.error) {
         return NextResponse.json({ ok: false, error: savedRes.error.message }, { status: 500 });
     }
 
-    if (queueRes.error) {
-        return NextResponse.json({ ok: false, error: queueRes.error.message }, { status: 500 });
+    if (productsRes.error) {
+        return NextResponse.json({ ok: false, error: productsRes.error.message }, { status: 500 });
     }
 
     const savedCalculations = (savedRes.data ?? []).filter((calc) => isForecastKind(calc.kind));
-    const queueCalculations = (queueRes.data ?? [])
-        .filter((calc) => isForecastKind(calc.calc_type_id))
-        .map((calc) => ({
-            id: calc.id,
-            kind: String(calc.calc_type_id || "").trim(),
-            status: calc.status ?? null,
-            updated_at: calc.updated_at ?? null,
+    const availableForecasts = (productsRes.data ?? [])
+        .filter((product) => isForecastKind(product.code))
+        .map((product) => ({
+            kind: String(product.code || "").trim(),
+            title: typeof product.title === "string" ? product.title : null,
         }));
 
-    return NextResponse.json({ ok: true, savedCalculations, queueCalculations });
+    return NextResponse.json({ ok: true, savedCalculations, availableForecasts });
 }
 
 export async function POST(req: NextRequest) {
