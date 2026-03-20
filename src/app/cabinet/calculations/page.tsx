@@ -1185,26 +1185,7 @@ export default function CalculationsPage() {
 
                 {result && !loading && (
                     <div style={{ display: "grid", gap: 12 }}>
-                        {result.kind === "natal" ? (
-                            <NatalResultView text={result.text} />
-                        ) : (
-                            <pre
-                                style={{
-                                    margin: 0,
-                                    whiteSpace: "pre-wrap",
-                                    wordBreak: "break-word",
-                                    padding: 14,
-                                    borderRadius: 16,
-                                    border: "1px solid rgba(224,197,143,.10)",
-                                    background: "rgba(10,18,38,.18)",
-                                    color: "rgba(245,240,233,.92)",
-                                    fontSize: 13,
-                                    lineHeight: 1.6,
-                                }}
-                            >
-                                {result.text}
-                            </pre>
-                        )}
+                        {result.kind === "natal" && <NatalResultView text={result.text} />}
 
                         <div
                             style={{
@@ -1223,7 +1204,11 @@ export default function CalculationsPage() {
                             {interpretation.loading && <div style={{ color: "rgba(245,240,233,.78)" }}>Анализируем аспекты и собираем живую интерпретацию…</div>}
                             {!interpretation.loading && interpretation.error && <div style={{ color: "rgba(255,210,160,.9)", lineHeight: 1.6 }}>{interpretation.error}</div>}
                             {!interpretation.loading && interpretation.text && (
-                                <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.7, color: "rgba(245,240,233,.94)" }}>{interpretation.text}</div>
+                                result.kind === "natal" ? (
+                                    <NatalInterpretationSections text={interpretation.text} />
+                                ) : (
+                                    <MarkdownCard text={interpretation.text} />
+                                )
                             )}
                         </div>
 
@@ -1296,6 +1281,11 @@ function btn(): React.CSSProperties {
     };
 }
 
+type MarkdownSection = {
+    title: string;
+    body: string[];
+};
+
 function NatalResultView({ text }: { text: string }) {
     const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
     const header = lines.find((line) => line.startsWith("Натальная карта"));
@@ -1355,4 +1345,217 @@ function collectLines(lines: string[], marker: string) {
         if (line.startsWith("•")) items.push(line);
     }
     return items;
+}
+
+function NatalInterpretationSections({ text }: { text: string }) {
+    const sections = useMemo(() => extractMarkdownSections(text), [text]);
+    const [activeTitle, setActiveTitle] = useState<string | null>(sections[0]?.title ?? null);
+
+    if (!sections.length) {
+        return <MarkdownCard text={text} />;
+    }
+
+    const activeSection =
+        sections.find((section) => section.title === activeTitle) ?? sections[0];
+
+    return (
+        <div style={{ display: "grid", gap: 12 }}>
+            <div
+                style={{
+                    display: "grid",
+                    gap: 8,
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                }}
+            >
+                {sections.map((section) => {
+                    const active = section.title === activeSection.title;
+
+                    return (
+                        <button
+                            key={section.title}
+                            onClick={() => setActiveTitle(section.title)}
+                            style={{
+                                textAlign: "left",
+                                borderRadius: 16,
+                                padding: "14px 16px",
+                                border: active
+                                    ? "1px solid rgba(214,244,157,.38)"
+                                    : "1px solid rgba(214,244,157,.18)",
+                                background: active
+                                    ? "linear-gradient(180deg, rgba(174,210,113,.28), rgba(124,159,75,.34))"
+                                    : "linear-gradient(180deg, rgba(174,210,113,.18), rgba(124,159,75,.24))",
+                                color: "rgba(255,255,255,.96)",
+                                fontWeight: 900,
+                                cursor: "pointer",
+                                lineHeight: 1.4,
+                                boxShadow: active ? "0 10px 30px rgba(109, 141, 56, .22)" : "none",
+                            }}
+                        >
+                            {section.title}
+                        </button>
+                    );
+                })}
+            </div>
+
+            <div
+                style={{
+                    padding: 16,
+                    borderRadius: 18,
+                    border: "1px solid rgba(214,244,157,.18)",
+                    background: "rgba(214,244,157,.08)",
+                }}
+            >
+                <MarkdownCard text={activeSection.body.join("\n").trim()} />
+            </div>
+        </div>
+    );
+}
+
+function MarkdownCard({ text }: { text: string }) {
+    const blocks = useMemo(() => parseMarkdownBlocks(text), [text]);
+
+    return (
+        <div style={{ display: "grid", gap: 12, color: "rgba(245,240,233,.94)" }}>
+            {blocks.map((block, index) => {
+                if (block.type === "heading") {
+                    return (
+                        <div key={`${block.type}-${index}`} style={{ fontWeight: 900, fontSize: 18 }}>
+                            {renderInlineMarkdown(block.text)}
+                        </div>
+                    );
+                }
+
+                if (block.type === "ordered") {
+                    return (
+                        <ol
+                            key={`${block.type}-${index}`}
+                            style={{ margin: 0, paddingLeft: 22, display: "grid", gap: 10, lineHeight: 1.75 }}
+                        >
+                            {block.items.map((item, itemIndex) => (
+                                <li key={`${item}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>
+                            ))}
+                        </ol>
+                    );
+                }
+
+                if (block.type === "unordered") {
+                    return (
+                        <ul
+                            key={`${block.type}-${index}`}
+                            style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 8, lineHeight: 1.7 }}
+                        >
+                            {block.items.map((item, itemIndex) => (
+                                <li key={`${item}-${itemIndex}`}>{renderInlineMarkdown(item)}</li>
+                            ))}
+                        </ul>
+                    );
+                }
+
+                return (
+                    <p key={`${block.type}-${index}`} style={{ margin: 0, lineHeight: 1.75 }}>
+                        {renderInlineMarkdown(block.text)}
+                    </p>
+                );
+            })}
+        </div>
+    );
+}
+
+function renderInlineMarkdown(text: string) {
+    const normalized = text.replace(/\*\*\*/g, "**").replace(/###\s*/g, "");
+    const parts = normalized.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+
+    return parts.map((part, index) => {
+        if (part.startsWith("**") && part.endsWith("**")) {
+            return <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>;
+        }
+
+        return <span key={`${part}-${index}`}>{part}</span>;
+    });
+}
+
+function extractMarkdownSections(text: string): MarkdownSection[] {
+    const lines = text.split("\n");
+    const sections: MarkdownSection[] = [];
+    let current: MarkdownSection | null = null;
+
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) continue;
+
+        const headingMatch = line.match(/^#{2,3}\s+(.+)$/);
+        if (headingMatch) {
+            current = { title: headingMatch[1].replace(/\*\*/g, "").trim(), body: [] };
+            sections.push(current);
+            continue;
+        }
+
+        if (!current) {
+            current = { title: "Общий разбор", body: [] };
+            sections.push(current);
+        }
+
+        current.body.push(line);
+    }
+
+    return sections;
+}
+
+function parseMarkdownBlocks(text: string) {
+    const lines = text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    const blocks: Array<
+        | { type: "heading"; text: string }
+        | { type: "paragraph"; text: string }
+        | { type: "ordered"; items: string[] }
+        | { type: "unordered"; items: string[] }
+    > = [];
+
+    let index = 0;
+    while (index < lines.length) {
+        const line = lines[index];
+
+        if (/^#{1,3}\s+/.test(line)) {
+            blocks.push({ type: "heading", text: line.replace(/^#{1,3}\s+/, "") });
+            index += 1;
+            continue;
+        }
+
+        if (/^\d+\.\s+/.test(line)) {
+            const items: string[] = [];
+            while (index < lines.length && /^\d+\.\s+/.test(lines[index])) {
+                items.push(lines[index].replace(/^\d+\.\s+/, ""));
+                index += 1;
+            }
+            blocks.push({ type: "ordered", items });
+            continue;
+        }
+
+        if (/^[-•]\s+/.test(line)) {
+            const items: string[] = [];
+            while (index < lines.length && /^[-•]\s+/.test(lines[index])) {
+                items.push(lines[index].replace(/^[-•]\s+/, ""));
+                index += 1;
+            }
+            blocks.push({ type: "unordered", items });
+            continue;
+        }
+
+        const paragraphLines: string[] = [];
+        while (
+            index < lines.length &&
+            !/^#{1,3}\s+/.test(lines[index]) &&
+            !/^\d+\.\s+/.test(lines[index]) &&
+            !/^[-•]\s+/.test(lines[index])
+        ) {
+            paragraphLines.push(lines[index]);
+            index += 1;
+        }
+        blocks.push({ type: "paragraph", text: paragraphLines.join(" ") });
+    }
+
+    return blocks;
 }
