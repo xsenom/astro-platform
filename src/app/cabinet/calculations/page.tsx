@@ -1098,28 +1098,32 @@ export default function CalculationsPage() {
                                 style={{
                                     width: "100%",
                                     maxWidth: 340,
+                                    minHeight: "100%",
                                     justifySelf: "center",
                                     padding: 16,
                                     borderRadius: 18,
                                     border: "1px solid rgba(224,197,143,.14)",
                                     background: "rgba(10,18,38,.18)",
                                     display: "grid",
-                                    gap: 10,
+                                    gap: 12,
+                                    gridTemplateRows: "auto minmax(88px, auto) minmax(34px, auto) auto",
                                 }}
                             >
                                 <div
                                     style={{
-                                        display: "grid",
+                                        display: "flex",
+                                        alignItems: "flex-start",
+                                        justifyContent: "space-between",
                                         gap: 12,
-                                        justifyItems: "center",
                                     }}
                                 >
                                     <div
                                         style={{
-                                            width: "100%",
+                                            flex: 1,
+                                            minWidth: 0,
                                             fontWeight: 900,
                                             fontSize: 16,
-                                            textAlign: "left",
+                                            lineHeight: 1.45,
                                         }}
                                     >
                                         {product.title}
@@ -1127,6 +1131,7 @@ export default function CalculationsPage() {
 
                                     <div
                                         style={{
+                                            flexShrink: 0,
                                             minWidth: 88,
                                             padding: "6px 18px",
                                             borderRadius: 999,
@@ -1155,7 +1160,7 @@ export default function CalculationsPage() {
                                     style={{
                                         color: "rgba(245,240,233,.72)",
                                         lineHeight: 1.5,
-                                        minHeight: 44,
+                                        minHeight: 88,
                                     }}
                                 >
                                     {product.description || "Описание скоро будет добавлено"}
@@ -1166,6 +1171,8 @@ export default function CalculationsPage() {
                                         display: "flex",
                                         gap: 8,
                                         flexWrap: "wrap",
+                                        alignItems: "flex-start",
+                                        minHeight: 34,
                                     }}
                                 >
                                     {hasSaved && (
@@ -1183,7 +1190,7 @@ export default function CalculationsPage() {
                                 <button
                                     disabled={!canRun || profileLoading || loading}
                                     onClick={() => handleAction(product.code)}
-                                    style={btn()}
+                                    style={{ ...btn(), width: "100%" }}
                                 >
                                     {loading && activeKind === product.code
                                         ? "Выполняется…"
