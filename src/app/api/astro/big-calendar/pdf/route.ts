@@ -8,6 +8,15 @@ type PdfRequestBody = {
     birth_time?: string;
 };
 
+class RouteError extends Error {
+    status: number;
+
+    constructor(message: string, status = 500) {
+        super(message);
+        this.status = status;
+    }
+}
+
 const PDF_RENDER_URL =
     process.env.BIG_CALENDAR_PDF_RENDER_URL?.trim() ||
     "http://45.90.35.133:1800/pdf/render";
@@ -29,10 +38,7 @@ export async function POST(req: NextRequest) {
         const birthTime = body.birth_time?.trim();
 
         if (!content || !summary || !birthDate || !birthTime) {
-            return NextResponse.json(
-                { ok: false, error: "Недостаточно данных для сборки PDF." },
-                { status: 400 }
-            );
+            throw new RouteError("Недостаточно данных для сборки PDF.", 400);
         }
 
         const form = new URLSearchParams({
@@ -53,7 +59,14 @@ export async function POST(req: NextRequest) {
 
         if (!response.ok) {
             const errorText = await response.text().catch(() => "");
-            throw new Error(errorText || `HTTP ${response.status}`);
+            const message =
+                response.status === 403
+                    ? `Сервис PDF отклонил запрос (403 Forbidden). Проверьте доступ сервера к ${PDF_RENDER_URL}.`
+                    : errorText || `HTTP ${response.status}`;
+            throw new RouteError(
+                message,
+                response.status >= 400 && response.status < 600 ? response.status : 502
+            );
         }
 
         const bytes = await response.arrayBuffer();
@@ -67,6 +80,7 @@ export async function POST(req: NextRequest) {
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error";
-        return NextResponse.json({ ok: false, error: message }, { status: 500 });
+        const status = error instanceof RouteError ? error.status : 500;
+        return NextResponse.json({ ok: false, error: message }, { status });
     }
 }
