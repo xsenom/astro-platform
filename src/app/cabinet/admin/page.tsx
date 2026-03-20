@@ -1693,7 +1693,6 @@ export default function AdminPage() {
                                                 {calc.source === "saved" ? " • сохранён" : " • из очереди"}
                                                 {calc.target_date ? ` • ${calc.target_date}` : ""}
                                                 {calc.updated_at ? ` • ${new Date(calc.updated_at).toLocaleDateString("ru-RU")}` : ""}
-                                                {calc.status ? ` • ${calc.status}` : ""}
                                             </option>
                                         ))
                                     )}
