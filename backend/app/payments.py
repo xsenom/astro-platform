@@ -75,6 +75,22 @@ def create_prodamus_signature(data: dict, secret_key: str) -> str:
     ).hexdigest()
 
 
+
+
+def is_admin_user(user_id: str) -> bool:
+    url = f"{SUPABASE_URL}/rest/v1/admin_users"
+    resp = requests.get(
+        url,
+        headers=supabase_headers(),
+        params={"select": "user_id", "user_id": f"eq.{user_id}", "limit": "1"},
+        timeout=20,
+    )
+
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=500, detail=f"Ошибка проверки админа: {resp.text}")
+
+    return bool(resp.json())
+
 def get_product_by_code(product_code: str) -> dict:
     url = f"{SUPABASE_URL}/rest/v1/calculation_products"
     resp = requests.get(
@@ -252,6 +268,15 @@ async def create_prodamus_payment_link(
             status_code=400,
             detail="Этот расчёт бесплатный, оплата не требуется",
         )
+
+    if is_admin_user(x_user_id):
+        grant_user_access(x_user_id, product["code"], f"admin-free-{product['code']}")
+        return {
+            "ok": True,
+            "payment_url": None,
+            "free_for_admin": True,
+            "message": "Для администратора расчёт открыт бесплатно.",
+        }
 
     order = create_order(x_user_id, product)
 
