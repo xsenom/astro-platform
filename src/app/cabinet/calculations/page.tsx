@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    type CSSProperties,
+} from "react";
 import { supabase } from "@/lib/supabase/client";
 
 type CalcKind = "natal" | "day" | "week" | "month" | "big_calendar";
@@ -36,14 +42,22 @@ type SavedCalculationRow = {
     id: string;
     kind: CalcKind;
     target_date: string | null;
+
     result_text: string;
     result_json: any;
     input_params: any;
     updated_at: string;
+
+    interpretation_text?: string | null;
+    interpretation_model?: string | null;
+    interpretation_updated_at?: string | null;
+
     pdf_url?: string | null;
     pdf_path?: string | null;
     file_name?: string | null;
 };
+
+
 
 type AdminState = {
     isAdmin: boolean;
@@ -88,6 +102,85 @@ function parseBirthTime(value: string | null) {
     };
 }
 
+function parseYmdToLocalDate(value: string | null) {
+    if (!value) return null;
+    const [y, m, d] = value.split("-").map((x) => Number.parseInt(x, 10));
+    if (!y || !m || !d) return null;
+    return new Date(y, m - 1, d, 0, 0, 0, 0);
+}
+
+function addDays(date: Date, days: number) {
+    const next = new Date(date);
+    next.setDate(next.getDate() + days);
+    return next;
+}
+
+function endOfDay(date: Date) {
+    const next = new Date(date);
+    next.setHours(23, 59, 59, 999);
+    return next;
+}
+
+function getRowAnchorDate(row: SavedCalculationRow) {
+    const byTargetDate = parseYmdToLocalDate(row.target_date ?? null);
+    if (byTargetDate) return byTargetDate;
+
+    const byUpdatedAt = new Date(row.updated_at);
+    if (Number.isNaN(byUpdatedAt.getTime())) return null;
+
+    return new Date(
+        byUpdatedAt.getFullYear(),
+        byUpdatedAt.getMonth(),
+        byUpdatedAt.getDate(),
+        0,
+        0,
+        0,
+        0
+    );
+}
+
+function getExpirationDate(row: SavedCalculationRow) {
+    if (row.kind === "natal") return null;
+
+    const anchor = getRowAnchorDate(row);
+    if (!anchor) return null;
+
+    if (row.kind === "day") {
+        return endOfDay(anchor);
+    }
+
+    if (row.kind === "week") {
+        return endOfDay(addDays(anchor, 6));
+    }
+
+    if (row.kind === "month") {
+        return endOfDay(addDays(anchor, 29));
+    }
+
+    if (row.kind === "big_calendar") {
+        return endOfDay(addDays(anchor, 60));
+    }
+
+    return null;
+}
+
+function isSavedCalculationActive(row: SavedCalculationRow, now: Date) {
+    if (row.kind === "natal") return true;
+
+    const expiresAt = getExpirationDate(row);
+    if (!expiresAt) return false;
+
+    return now.getTime() <= expiresAt.getTime();
+}
+
+function formatExpiration(kind: CalcKind) {
+    if (kind === "day") return "до 23:59 текущего дня";
+    if (kind === "week") return "6 дней после даты прогноза";
+    if (kind === "month") return "29 дней после даты прогноза";
+    if (kind === "big_calendar") return "60 дней после даты прогноза";
+    return "без ограничения";
+}
+
 const loadingLabels: Record<CalcKind, string[]> = {
     natal: [
         "Строим натальную карту",
@@ -95,24 +188,24 @@ const loadingLabels: Record<CalcKind, string[]> = {
         "Формируем интерпретацию",
     ],
     day: [
-        "Считаем прогноз на день",
-        "Анализируем транзиты",
-        "Собираем рекомендации",
+        "Открываем сохранённый прогноз на день",
+        "Проверяем срок хранения результата",
+        "Подготавливаем отображение",
     ],
     week: [
-        "Считаем прогноз на неделю",
-        "Выделяем основные темы периода",
-        "Формируем итоговый текст",
+        "Открываем сохранённый прогноз на неделю",
+        "Проверяем срок хранения результата",
+        "Подготавливаем отображение",
     ],
     month: [
-        "Считаем прогноз на месяц",
-        "Анализируем благоприятные периоды",
-        "Собираем итоговый результат",
+        "Открываем сохранённый прогноз на месяц",
+        "Проверяем срок хранения результата",
+        "Подготавливаем отображение",
     ],
     big_calendar: [
-        "Собираем персональный календарь",
-        "Формируем интерпретацию",
-        "Готовим PDF-файл",
+        "Открываем большой женский календарь",
+        "Проверяем срок хранения результата",
+        "Подготавливаем PDF и отображение",
     ],
 };
 
@@ -152,7 +245,8 @@ export default function CalculationsPage() {
     const [resultMeta, setResultMeta] = useState<{
         source: "saved" | "fresh" | null;
         updatedAt?: string | null;
-    }>({ source: null, updatedAt: null });
+        expiresAt?: string | null;
+    }>({ source: null, updatedAt: null, expiresAt: null });
 
     const [interpretation, setInterpretation] = useState<InterpretationState>({
         loading: false,
@@ -160,6 +254,8 @@ export default function CalculationsPage() {
         error: null,
         model: null,
     });
+
+    const interpretationRequestRef = useRef<string | null>(null);
 
     const [activeNatalInterpretationTitle, setActiveNatalInterpretationTitle] =
         useState<string | null>(null);
@@ -175,6 +271,70 @@ export default function CalculationsPage() {
         () => parseBirthTime(profile?.birth_time ?? null),
         [profile?.birth_time]
     );
+
+    async function saveInterpretation(params: {
+        kind: CalcKind;
+        interpretationText: string;
+        interpretationModel?: string | null;
+        targetDate?: string | null;
+    }) {
+        if (!userId) return null;
+
+        try {
+            let query = supabase
+                .from("saved_calculations")
+                .select("id")
+                .eq("user_id", userId)
+                .eq("kind", params.kind);
+
+            if (params.kind === "day") {
+                query = query.eq("target_date", params.targetDate ?? null);
+            }
+
+            const { data: existing, error: selectError } = await query
+                .order("updated_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            if (selectError) {
+                console.error("saveInterpretation selectError:", selectError);
+                setErr(`Ошибка сохранения интерпретации: ${selectError.message}`);
+                return null;
+            }
+
+            if (!existing?.id) {
+                console.warn(
+                    "saveInterpretation: запись не найдена, сначала должен сохраниться расчёт"
+                );
+                return null;
+            }
+
+            const { error: updateError } = await supabase
+                .from("saved_calculations")
+                .update({
+                    interpretation_text: params.interpretationText,
+                    interpretation_model: params.interpretationModel ?? null,
+                    interpretation_updated_at: new Date().toISOString(),
+                })
+                .eq("id", existing.id);
+
+            if (updateError) {
+                console.error("saveInterpretation updateError:", updateError);
+                setErr(`Ошибка сохранения интерпретации: ${updateError.message}`);
+                return null;
+            }
+
+            return await refreshAndGetSaved(params.kind);
+        } catch (e: any) {
+            console.error("saveInterpretation unexpected error:", e);
+            setErr(
+                `Ошибка сохранения интерпретации: ${
+                    e?.message || "Неизвестная ошибка"
+                }`
+            );
+            return null;
+        }
+    }
 
     const missingFields = useMemo(() => {
         const missing: string[] = [];
@@ -221,6 +381,47 @@ export default function CalculationsPage() {
         setActiveNatalInterpretationTitle(null);
     }, [interpretation.text, result?.kind]);
 
+    function buildSavedMap(rows: SavedCalculationRow[]) {
+        const now = new Date();
+        const nextSaved: Partial<Record<CalcKind, SavedCalculationRow>> = {};
+
+        for (const row of rows) {
+            if (!isSavedCalculationActive(row, now)) {
+                continue;
+            }
+
+            if (row.kind === "day") {
+                if (row.target_date === targetDate && !nextSaved.day) {
+                    nextSaved.day = row;
+                }
+                continue;
+            }
+
+            if (!nextSaved[row.kind]) {
+                nextSaved[row.kind] = row;
+            }
+        }
+
+        return nextSaved;
+    }
+
+    async function loadSavedCalculations(uid: string) {
+        const { data, error } = await supabase
+            .from("saved_calculations")
+            .select(
+                "id, kind, target_date, result_text, result_json, input_params, updated_at, interpretation_text, interpretation_model, interpretation_updated_at, pdf_url, pdf_path, file_name"
+            )
+            .eq("user_id", uid)
+            .order("updated_at", { ascending: false });
+
+        if (error) throw new Error(error.message);
+
+        const rows = (data ?? []) as SavedCalculationRow[];
+        const nextSaved = buildSavedMap(rows);
+        setSavedMap(nextSaved);
+        return nextSaved;
+    }
+
     async function bootstrap() {
         setProfileLoading(true);
         setProfileError(null);
@@ -240,46 +441,42 @@ export default function CalculationsPage() {
             const { data: sessionData } = await supabase.auth.getSession();
             const token = sessionData.session?.access_token ?? null;
 
-            const [
-                profileResp,
-                productsResp,
-                accessResp,
-                savedResp,
-                adminResp,
-            ] = await Promise.all([
-                supabase
-                    .from("profiles")
-                    .select("birth_date, birth_time, birth_city")
-                    .eq("id", uid)
-                    .maybeSingle(),
+            const [profileResp, productsResp, accessResp, adminResp, savedResp] =
+                await Promise.all([
+                    supabase
+                        .from("profiles")
+                        .select("birth_date, birth_time, birth_city")
+                        .eq("id", uid)
+                        .maybeSingle(),
 
-                supabase
-                    .from("calculation_products")
-                    .select(
-                        "code, title, description, price_rub, is_free, is_active, sort_order"
-                    )
-                    .eq("is_active", true)
-                    .order("sort_order", { ascending: true }),
+                    supabase
+                        .from("calculation_products")
+                        .select(
+                            "code, title, description, price_rub, is_free, is_active, sort_order"
+                        )
+                        .eq("is_active", true)
+                        .order("sort_order", { ascending: true }),
 
-                supabase
-                    .from("user_calculation_access")
-                    .select("product_code")
-                    .eq("user_id", uid),
+                    supabase
+                        .from("user_calculation_access")
+                        .select("product_code")
+                        .eq("user_id", uid),
 
-                supabase
-                    .from("saved_calculations")
-                    .select(
-                        "id, kind, target_date, result_text, result_json, input_params, updated_at, pdf_url, pdf_path, file_name"
-                    )
-                    .eq("user_id", uid)
-                    .order("updated_at", { ascending: false }),
+                    token
+                        ? fetch("/api/admin/me", {
+                            headers: { Authorization: `Bearer ${token}` },
+                        }).then((res) => res.json().catch(() => null))
+                        : Promise.resolve(null),
 
-                token
-                    ? fetch("/api/admin/me", {
-                        headers: { Authorization: `Bearer ${token}` },
-                    }).then((res) => res.json().catch(() => null))
-                    : Promise.resolve(null),
-            ]);
+                    supabase
+                        .from("saved_calculations")
+                        .select(
+                            "id, kind, target_date, result_text, result_json, input_params, updated_at, interpretation_text, interpretation_model, interpretation_updated_at, pdf_url, pdf_path, file_name"
+
+                        )
+                        .eq("user_id", uid)
+                        .order("updated_at", { ascending: false }),
+                ]);
 
             if (profileResp.error) {
                 setProfileError(profileResp.error.message);
@@ -334,22 +531,7 @@ export default function CalculationsPage() {
 
             if (!savedResp.error) {
                 const rows = (savedResp.data ?? []) as SavedCalculationRow[];
-                const nextSaved: Partial<Record<CalcKind, SavedCalculationRow>> = {};
-
-                for (const row of rows) {
-                    if (row.kind === "day") {
-                        if (row.target_date === targetDate && !nextSaved.day) {
-                            nextSaved.day = row;
-                        }
-                        continue;
-                    }
-
-                    if (!nextSaved[row.kind]) {
-                        nextSaved[row.kind] = row;
-                    }
-                }
-
-                setSavedMap(nextSaved);
+                setSavedMap(buildSavedMap(rows));
             }
         } finally {
             setProfileLoading(false);
@@ -360,7 +542,46 @@ export default function CalculationsPage() {
         return adminState.isAdmin || !!accessMap[kind];
     }
 
-    async function loadInterpretation(kind: CalcKind, resultText: string, raw: any) {
+    function getSavedRow(kind: CalcKind) {
+        const row = savedMap[kind];
+        if (!row) return null;
+
+        const now = new Date();
+        if (!isSavedCalculationActive(row, now)) {
+            return null;
+        }
+
+        if (kind === "day" && row.target_date !== targetDate) {
+            return null;
+        }
+
+        return row;
+    }
+
+    function buildInterpretationKey(
+        kind: CalcKind,
+        rowOrData: {
+            updated_at?: string | null;
+            target_date?: string | null;
+            result_text?: string | null;
+        }
+    ) {
+        return [
+            kind,
+            rowOrData.updated_at ?? "",
+            rowOrData.target_date ?? "",
+            rowOrData.result_text ?? "",
+        ].join("::");
+    }
+
+    async function loadInterpretation(
+        kind: CalcKind,
+        resultText: string,
+        raw: any,
+        options?: { targetDate?: string | null }
+    ) {
+        console.log("[loadInterpretation] AI interpretation request", { kind });
+
         setInterpretation({
             loading: true,
             text: null,
@@ -394,14 +615,33 @@ export default function CalculationsPage() {
                 return;
             }
 
+            const interpretationText = json?.interpretation || null;
+            const interpretationModel = json?.model || "gpt-4.1-mini";
+
             setInterpretation({
                 loading: false,
-                text: json?.interpretation || null,
-                error: json?.interpretation
+                text: interpretationText,
+                error: interpretationText
                     ? null
                     : "ИИ не вернул текст интерпретации.",
-                model: json?.model || "gpt-4.1-mini",
+                model: interpretationModel,
             });
+
+            if (interpretationText) {
+                const savedRow = await saveInterpretation({
+                    kind,
+                    interpretationText,
+                    interpretationModel,
+                    targetDate: options?.targetDate ?? null,
+                });
+
+                if (savedRow) {
+                    setSavedMap((prev) => ({
+                        ...prev,
+                        [kind]: savedRow,
+                    }));
+                }
+            }
         } catch (e: any) {
             setInterpretation({
                 loading: false,
@@ -433,6 +673,18 @@ export default function CalculationsPage() {
         return json;
     }
 
+    async function refreshAndGetSaved(kind: CalcKind) {
+        if (!userId) return null;
+
+        const map = await loadSavedCalculations(userId);
+        const row = map[kind];
+
+        if (!row) return null;
+        if (kind === "day" && row.target_date !== targetDate) return null;
+
+        return row;
+    }
+
     async function saveCalculation(params: {
         kind: CalcKind;
         resultText: string;
@@ -440,14 +692,14 @@ export default function CalculationsPage() {
         inputParams: any;
         targetDate?: string | null;
     }) {
-        if (!userId) return;
+        if (!userId) return null;
 
         try {
             if (params.kind === "day") {
                 const { data: existing, error: selectError } = await supabase
                     .from("saved_calculations")
                     .select("id")
-                     .eq("user_id", userId)
+                    .eq("user_id", userId)
                     .eq("kind", "day")
                     .eq("target_date", params.targetDate ?? null)
                     .maybeSingle();
@@ -455,7 +707,7 @@ export default function CalculationsPage() {
                 if (selectError) {
                     console.error("saveCalculation day selectError:", selectError);
                     setErr(`Ошибка сохранения расчёта: ${selectError.message}`);
-                    return;
+                    return null;
                 }
 
                 if (existing?.id) {
@@ -472,9 +724,10 @@ export default function CalculationsPage() {
                     if (updateError) {
                         console.error("saveCalculation day updateError:", updateError);
                         setErr(`Ошибка сохранения расчёта: ${updateError.message}`);
+                        return null;
                     }
 
-                    return;
+                    return await refreshAndGetSaved("day");
                 }
 
                 const { error: insertError } = await supabase
@@ -491,22 +744,23 @@ export default function CalculationsPage() {
                 if (insertError) {
                     console.error("saveCalculation day insertError:", insertError);
                     setErr(`Ошибка сохранения расчёта: ${insertError.message}`);
+                    return null;
                 }
 
-                return;
+                return await refreshAndGetSaved("day");
             }
 
             const { data: existing, error: selectError } = await supabase
                 .from("saved_calculations")
                 .select("id")
-                 .eq("user_id", userId)
+                .eq("user_id", userId)
                 .eq("kind", params.kind)
                 .maybeSingle();
 
             if (selectError) {
                 console.error("saveCalculation selectError:", selectError);
                 setErr(`Ошибка сохранения расчёта: ${selectError.message}`);
-                return;
+                return null;
             }
 
             if (existing?.id) {
@@ -523,9 +777,10 @@ export default function CalculationsPage() {
                 if (updateError) {
                     console.error("saveCalculation updateError:", updateError);
                     setErr(`Ошибка сохранения расчёта: ${updateError.message}`);
+                    return null;
                 }
 
-                return;
+                return await refreshAndGetSaved(params.kind);
             }
 
             const { error: insertError } = await supabase
@@ -542,18 +797,21 @@ export default function CalculationsPage() {
             if (insertError) {
                 console.error("saveCalculation insertError:", insertError);
                 setErr(`Ошибка сохранения расчёта: ${insertError.message}`);
+                return null;
             }
+
+            return await refreshAndGetSaved(params.kind);
         } catch (e: any) {
             console.error("saveCalculation unexpected error:", e);
             setErr(
                 `Ошибка сохранения расчёта: ${e?.message || "Неизвестная ошибка"}`
             );
+            return null;
         }
     }
 
-    function showSaved(kind: CalcKind) {
-        const row = savedMap[kind];
-        if (!row) return false;
+    function applySavedResult(kind: CalcKind, row: SavedCalculationRow) {
+        const expiresAt = getExpirationDate(row);
 
         setResult({
             kind,
@@ -569,9 +827,48 @@ export default function CalculationsPage() {
         setResultMeta({
             source: "saved",
             updatedAt: row.updated_at,
+            expiresAt: expiresAt ? expiresAt.toISOString() : null,
         });
 
-        void loadInterpretation(kind, row.result_text, row.result_json);
+        if (row.interpretation_text?.trim()) {
+            setInterpretation({
+                loading: false,
+                text: row.interpretation_text,
+                error: null,
+                model: row.interpretation_model ?? null,
+            });
+            return;
+        }
+
+        const key = buildInterpretationKey(kind, {
+            updated_at: row.updated_at,
+            target_date: row.target_date,
+            result_text: row.result_text,
+        });
+
+        if (interpretationRequestRef.current === key) {
+            return;
+        }
+
+        interpretationRequestRef.current = key;
+
+        void loadInterpretation(kind, row.result_text, row.result_json, {
+            targetDate: row.target_date ?? null,
+        });
+    }
+
+    function showSaved(kind: CalcKind) {
+        const row = getSavedRow(kind);
+        if (!row) return false;
+
+        console.log("[showSaved] open from saved_calculations", {
+            kind,
+            updated_at: row.updated_at,
+            target_date: row.target_date,
+            expires_at: getExpirationDate(row)?.toISOString() ?? null,
+        });
+
+        applySavedResult(kind, row);
         return true;
     }
 
@@ -580,7 +877,13 @@ export default function CalculationsPage() {
         setActiveKind(kind);
         setErr(null);
         setResult(null);
-        setResultMeta({ source: null, updatedAt: null });
+        setResultMeta({ source: null, updatedAt: null, expiresAt: null });
+        setInterpretation({
+            loading: false,
+            text: null,
+            error: null,
+            model: null,
+        });
 
         try {
             if (showSaved(kind)) return;
@@ -596,49 +899,43 @@ export default function CalculationsPage() {
                 setUserId(currentUserId);
             }
 
+            console.log("[openPurchasedResult] try open saved result", { kind });
+
             const savedQuery = supabase
                 .from("saved_calculations")
                 .select(
-                    "id, kind, target_date, result_text, result_json, input_params, updated_at, pdf_url, pdf_path, file_name"
+                    "id, kind, target_date, result_text, result_json, input_params, updated_at, interpretation_text, interpretation_model, interpretation_updated_at, pdf_url, pdf_path, file_name"
+
                 )
-                 .eq("user_id", currentUserId)
+                .eq("user_id", currentUserId)
                 .eq("kind", kind)
                 .order("updated_at", { ascending: false })
-                .limit(1);
+                .limit(20);
 
             const { data, error } =
                 kind === "day"
-                    ? await savedQuery.eq("target_date", targetDate).maybeSingle()
-                    : await savedQuery.maybeSingle();
+                    ? await savedQuery.eq("target_date", targetDate)
+                    : await savedQuery;
 
             if (error) {
                 throw new Error(error.message);
             }
 
-            if (!data) {
-                throw new Error("Результат по этой покупке ещё не найден. Если оплата прошла только что, обновите страницу через несколько секунд.");
+            const rows = (data ?? []) as SavedCalculationRow[];
+            const activeRow = rows.find((row) =>
+                isSavedCalculationActive(row, new Date())
+            );
+
+            if (!activeRow) {
+                throw new Error(
+                    `Сохранённый результат для "${kind}" уже истёк или ещё не создан. Для этого типа срок хранения: ${formatExpiration(
+                        kind
+                    )}.`
+                );
             }
 
-            const row = data as SavedCalculationRow;
-            setSavedMap((prev) => ({ ...prev, [kind]: row }));
-
-            setResult({
-                kind,
-                text: row.result_text,
-                raw: {
-                    ...(row.result_json || {}),
-                    pdf_url: row.pdf_url ?? null,
-                    pdf_path: row.pdf_path ?? null,
-                    file_name: row.file_name ?? null,
-                },
-            } as ApiResult);
-
-            setResultMeta({
-                source: "saved",
-                updatedAt: row.updated_at,
-            });
-
-            void loadInterpretation(kind, row.result_text, row.result_json);
+            setSavedMap((prev) => ({ ...prev, [kind]: activeRow }));
+            applySavedResult(kind, activeRow);
         } catch (e: any) {
             setErr(e?.message || "Не удалось открыть сохранённый результат");
         } finally {
@@ -667,7 +964,13 @@ export default function CalculationsPage() {
         setActiveKind("natal");
         setErr(null);
         setResult(null);
-        setResultMeta({ source: null, updatedAt: null });
+        setResultMeta({ source: null, updatedAt: null, expiresAt: null });
+        setInterpretation({
+            loading: false,
+            text: null,
+            error: null,
+            model: null,
+        });
 
         try {
             if (showSaved("natal")) return;
@@ -690,10 +993,9 @@ export default function CalculationsPage() {
                 meta: json,
             });
 
-            setResultMeta({ source: "fresh", updatedAt: null });
-            void loadInterpretation("natal", text, json);
+            setResultMeta({ source: "fresh", updatedAt: null, expiresAt: null });
 
-            await saveCalculation({
+            const savedRow = await saveCalculation({
                 kind: "natal",
                 resultText: text,
                 resultJson: json,
@@ -704,18 +1006,24 @@ export default function CalculationsPage() {
                 },
             });
 
-            setSavedMap((prev) => ({
-                ...prev,
-                natal: {
-                    id: "temp-natal",
-                    kind: "natal",
-                    target_date: null,
-                    result_text: text,
-                    result_json: json,
-                    input_params: null,
-                    updated_at: new Date().toISOString(),
-                },
-            }));
+            if (savedRow) {
+                setSavedMap((prev) => ({
+                    ...prev,
+                    natal: savedRow,
+                }));
+            }
+
+            const key = buildInterpretationKey("natal", {
+                updated_at: new Date().toISOString(),
+                target_date: null,
+                result_text: text,
+            });
+
+            interpretationRequestRef.current = key;
+
+            void loadInterpretation("natal", text, json, {
+                targetDate: null,
+            });
         } catch (e: any) {
             setErr(e?.message || "Ошибка");
         } finally {
@@ -769,23 +1077,12 @@ export default function CalculationsPage() {
             return;
         }
 
-        if (kind === "big_calendar") {
-            if (!isPurchased(kind)) {
-                void openPayment(kind);
-                return;
-            }
-            void openPurchasedResult(kind);
-            return;
-        }
-
         if (!isPurchased(kind)) {
             void openPayment(kind);
             return;
         }
 
-        if (kind === "day" || kind === "week" || kind === "month") {
-            void openPurchasedResult(kind);
-        }
+        void openPurchasedResult(kind);
     }
 
     const showNatalResultBlock =
@@ -840,8 +1137,7 @@ export default function CalculationsPage() {
                             color: "rgba(245,240,233,.86)",
                         }}
                     >
-                        Список расчётов пуст. Проверь таблицу{" "}
-                        <b>calculation_products</b> и поля <b>is_active = true</b>.
+                        Список расчётов пуст. Проверь таблицу <b>calculation_products</b> и поле <b>is_active = true</b>.
                     </div>
                 )}
 
@@ -865,9 +1161,7 @@ export default function CalculationsPage() {
                             return (
                                 <div key={product.code} style={productCardStyle()}>
                                     <div style={cardTopRowStyle}>
-                                        <div style={cardTitleStyle}>
-                                            {product.title}
-                                        </div>
+                                        <div style={cardTitleStyle}>{product.title}</div>
 
                                         <div
                                             style={topBadgeStyle(
@@ -1016,8 +1310,11 @@ export default function CalculationsPage() {
                     </div>
                 )}
 
+
+
                 {result && !loading && (
                     <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
+
                         {result.kind === "natal" &&
                             !!natalInterpretationSections.length && (
                                 <div
@@ -1039,8 +1336,7 @@ export default function CalculationsPage() {
                                         {natalInterpretationSections.map((section) => {
                                             const active =
                                                 section.title ===
-                                                (activeNatalInterpretationSection?.title ??
-                                                    null);
+                                                (activeNatalInterpretationSection?.title ?? null);
 
                                             return (
                                                 <button
@@ -1200,8 +1496,7 @@ export default function CalculationsPage() {
                                     color: "rgba(245,240,233,.72)",
                                 }}
                             >
-                                Пожалуйста, подождите. После завершения результат
-                                автоматически сохранится в кабинете.
+                                Пожалуйста, подождите. После завершения результат автоматически сохранится в кабинете.
                             </div>
                         </div>
                     )}
