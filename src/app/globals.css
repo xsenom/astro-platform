@@ -707,3 +707,239 @@ body::before{
     .cab-form{ grid-template-columns: 1fr; }
     .cab-next{ grid-template-columns: 1fr; }
 }
+
+.pageFrame{
+    min-height: calc(100vh - 260px);
+}
+
+.landingShell{
+    width: min(1180px, calc(100% - 32px));
+    margin: 0 auto;
+    padding: 56px 0 72px;
+    display: grid;
+    gap: 28px;
+}
+
+.landingHero,
+.landingSection,
+.siteFooter__inner{
+    border: 1px solid rgba(224,197,143,.16);
+    background: linear-gradient(180deg, rgba(17,34,80,.40), rgba(15,23,42,.28));
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+}
+
+.landingHero{
+    border-radius: 30px;
+    padding: 32px;
+    overflow: hidden;
+}
+
+.landingBadge,
+.sectionKicker,
+.siteFooter__eyebrow{
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    width: fit-content;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(224,197,143,.2);
+    background: rgba(224,197,143,.08);
+    color: rgba(245,240,233,.88);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+.landingGrid,
+.landingTextGrid,
+.siteFooter__grid,
+.ctaPanel{
+    display: grid;
+    gap: 20px;
+}
+
+.landingGrid{
+    margin-top: 24px;
+    grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr);
+    align-items: stretch;
+}
+
+.landingIntro,
+.landingFeatureCard,
+.landingPanel,
+.stepCard,
+.ctaPanel,
+.siteFooter__card{
+    border-radius: 24px;
+    border: 1px solid rgba(224,197,143,.14);
+    background: rgba(9,16,34,.36);
+    padding: 24px;
+}
+
+.landingEyebrow{
+    margin: 0 0 12px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    font-size: 12px;
+}
+
+.landingTitle{
+    margin: 0;
+    max-width: 13ch;
+    font-size: clamp(2.3rem, 5vw, 4.4rem);
+    line-height: .98;
+    font-weight: 900;
+    letter-spacing: -.04em;
+}
+
+.landingLead,
+.landingPanel p,
+.offeringCard p,
+.stepCard p,
+.siteFooter p,
+.ctaMeta span{
+    color: var(--muted);
+    line-height: 1.7;
+}
+
+.landingLead{ margin: 22px 0 0; max-width: 62ch; }
+.landingActions{ display:flex; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
+
+.landingFeatureCard{
+    position: relative;
+    min-height: 320px;
+    overflow: hidden;
+    display: flex;
+    align-items: end;
+}
+
+.orbitCard::before{
+    content:"";
+    position:absolute;
+    inset:-20% auto auto 10%;
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(224,197,143,.30), transparent 62%);
+    filter: blur(10px);
+    animation: haloPulse 6s ease-in-out infinite;
+}
+
+.orbitRing{
+    position:absolute;
+    border-radius: 50%;
+    border: 1px solid rgba(224,197,143,.18);
+    animation: spinOrbit 18s linear infinite;
+}
+
+.orbitRingOne{ width: 220px; height: 220px; top: 24px; right: 26px; }
+.orbitRingTwo{ width: 150px; height: 150px; top: 58px; right: 62px; animation-direction: reverse; animation-duration: 12s; }
+
+.orbitCenter{
+    position:absolute;
+    top: 112px;
+    right: 116px;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    display:grid;
+    place-items:center;
+    background: linear-gradient(180deg, rgba(224,197,143,.35), rgba(224,197,143,.1));
+    color: var(--accent);
+    box-shadow: 0 0 30px rgba(224,197,143,.25);
+}
+
+.landingFeatureContent{ position: relative; z-index: 1; max-width: 28ch; }
+.landingFeatureContent h2, .sectionHeading h2, .ctaPanel h2, .siteFooter__hero h2 { margin: 0; font-size: clamp(1.6rem, 3vw, 2.5rem); line-height: 1.1; }
+.landingFeatureContent p { margin: 12px 0 0; color: var(--muted); line-height: 1.7; }
+
+.landingSection{
+    border-radius: 28px;
+    padding: 28px;
+}
+
+.sectionHeading{ display:grid; gap: 12px; margin-bottom: 22px; }
+.landingTextGrid, .siteFooter__grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.landingList{ margin: 16px 0 0; padding-left: 18px; display:grid; gap: 10px; color: var(--muted); }
+.softGlow{ box-shadow: 0 0 0 1px rgba(224,197,143,.06), 0 0 50px rgba(224,197,143,.08); }
+
+.offeringGrid, .stepsGrid{ display:grid; gap: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.offeringCard h3{ margin: 14px 0 8px; font-size: 1.1rem; }
+.offeringIcon{
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+    display:grid;
+    place-items:center;
+    background: rgba(224,197,143,.12);
+    color: var(--accent);
+}
+
+.stepCard{ position: relative; overflow: hidden; }
+.stepCard::after{
+    content:"";
+    position:absolute;
+    inset:auto -40px -40px auto;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(224,197,143,.14), transparent 70%);
+}
+.stepIndex{ display:block; margin-bottom: 20px; color: var(--accent); font-size: 1.8rem; font-weight: 800; }
+
+.ctaPanel{ grid-template-columns: 1fr minmax(260px, 360px); align-items: center; }
+.ctaMeta{ display:flex; gap: 12px; align-items:flex-start; padding: 18px; border-radius: 18px; background: rgba(224,197,143,.08); }
+
+.siteFooter{ padding: 0 16px 32px; }
+.siteFooter__inner{ width: min(1180px, 100%); margin: 0 auto; border-radius: 28px; padding: 28px; }
+.siteFooter__hero{ max-width: 72ch; margin-bottom: 22px; }
+.siteFooter__hero p{ margin-top: 14px; }
+.siteFooter__grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.siteFooter__card summary{
+    cursor: pointer;
+    list-style: none;
+    font-size: 1.05rem;
+    font-weight: 800;
+    margin-bottom: 14px;
+}
+.siteFooter__card summary::-webkit-details-marker{ display:none; }
+.siteFooter__card[open]{ box-shadow: 0 0 0 1px rgba(224,197,143,.12), 0 18px 38px rgba(0,0,0,.18); }
+.siteFooter__card p + p{ margin-top: 12px; }
+
+@keyframes spinOrbit{
+    from{ transform: rotate(0deg); }
+    to{ transform: rotate(360deg); }
+}
+
+@keyframes haloPulse{
+    0%, 100%{ transform: scale(.92); opacity: .65; }
+    50%{ transform: scale(1.06); opacity: 1; }
+}
+
+@media (max-width: 920px){
+    .landingGrid,
+    .landingTextGrid,
+    .offeringGrid,
+    .stepsGrid,
+    .ctaPanel,
+    .siteFooter__grid{
+        grid-template-columns: 1fr;
+    }
+
+    .landingFeatureCard{ min-height: 280px; }
+}
+
+@media (max-width: 640px){
+    .landingShell{ width: min(100% - 20px, 1180px); padding-top: 18px; }
+    .landingHero, .landingSection, .siteFooter__inner{ padding: 20px; }
+    .landingIntro, .landingFeatureCard, .landingPanel, .stepCard, .ctaPanel, .siteFooter__card{ padding: 18px; }
+    .landingTitle{ max-width: none; }
+    .orbitRingOne{ right: 8px; }
+    .orbitRingTwo{ right: 42px; }
+    .orbitCenter{ right: 96px; }
+}
