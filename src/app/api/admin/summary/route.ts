@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
             getAdminClient().from("order_items").select("id, order_id, product_id, title_snapshot, price_cents, qty").limit(2000),
             getAdminClient().from("products").select("id, title, price_cents, currency").order("title", { ascending: true }).limit(2000),
             getAdminClient().from("product_calc_items").select("id, product_id, calc_type_id, qty").limit(5000),
-            getAdminClient().from("calculations").select("id, user_id, status, created_at, updated_at").order("created_at", { ascending: false }).limit(2000),
+            getAdminClient().from("calculations").select("id, user_id, calc_type_id, status, created_at, updated_at").order("created_at", { ascending: false }).limit(2000),
             getAdminClient()
                 .from("email_campaigns")
                 .select("id, created_at, segment_key, subject, status, recipients_count, sent_count, failed_count, created_by")

@@ -28,6 +28,10 @@ function getSmtpConfig() {
     return { host, port, username, password, secure };
 }
 
+function isForecastKind(kind: string | null | undefined) {
+    return ["day", "week", "month", "big_calendar"].includes(String(kind || "").trim());
+}
+
 function getCalcLabel(kind: string) {
     const labels: Record<string, string> = {
         natal: "Натальная карта",
@@ -85,17 +89,38 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ ok: false, error: "Укажите userId." }, { status: 400 });
     }
 
-    const { data, error } = await getAdminClient()
-        .from("saved_calculations")
-        .select("id, kind, target_date, updated_at, pdf_url, file_name, result_text")
-        .eq("user_id", userId)
-        .order("updated_at", { ascending: false });
+    const [savedRes, queueRes] = await Promise.all([
+        getAdminClient()
+            .from("saved_calculations")
+            .select("id, kind, target_date, updated_at, pdf_url, file_name, result_text")
+            .eq("user_id", userId)
+            .order("updated_at", { ascending: false }),
+        getAdminClient()
+            .from("calculations")
+            .select("id, calc_type_id, status, updated_at")
+            .eq("user_id", userId)
+            .order("updated_at", { ascending: false }),
+    ]);
 
-    if (error) {
-        return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    if (savedRes.error) {
+        return NextResponse.json({ ok: false, error: savedRes.error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, calculations: data ?? [] });
+    if (queueRes.error) {
+        return NextResponse.json({ ok: false, error: queueRes.error.message }, { status: 500 });
+    }
+
+    const savedCalculations = (savedRes.data ?? []).filter((calc) => isForecastKind(calc.kind));
+    const queueCalculations = (queueRes.data ?? [])
+        .filter((calc) => isForecastKind(calc.calc_type_id))
+        .map((calc) => ({
+            id: calc.id,
+            kind: String(calc.calc_type_id || "").trim(),
+            status: calc.status ?? null,
+            updated_at: calc.updated_at ?? null,
+        }));
+
+    return NextResponse.json({ ok: true, savedCalculations, queueCalculations });
 }
 
 export async function POST(req: NextRequest) {
@@ -140,6 +165,10 @@ export async function POST(req: NextRequest) {
 
         if (!calc) {
             return NextResponse.json({ ok: false, error: "Расчёт не найден." }, { status: 404 });
+        }
+
+        if (!isForecastKind(calc.kind)) {
+            return NextResponse.json({ ok: false, error: "Бесплатно можно отправлять только сохранённые прогнозы." }, { status: 400 });
         }
 
         const from = getEnv("SMTP_FROM");
