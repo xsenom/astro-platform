@@ -1182,3 +1182,229 @@ body::before{
         width: 100%;
     }
 }
+
+.astroFooter{
+    padding: 0 16px 32px;
+}
+
+.astroFooter__inner{
+    width: min(1180px, 100%);
+    margin: 0 auto;
+    border-radius: 28px;
+    padding: 28px 28px 20px;
+    border: 1px solid rgba(224,197,143,.16);
+    background: linear-gradient(180deg, rgba(17,34,80,.40), rgba(15,23,42,.30));
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+}
+
+.astroFooter__grid{
+    display: grid;
+    grid-template-columns: 1.15fr 1fr 1fr 1fr;
+    gap: 28px;
+}
+
+.astroFooter__brand{
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.astroFooter__logoWrap{
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.astroFooter__logoMark{
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(224,197,143,.22);
+    background: rgba(224,197,143,.08);
+    color: var(--accent);
+    font-size: 24px;
+    box-shadow: 0 0 24px rgba(224,197,143,.14);
+}
+
+.astroFooter__brandName{
+    font-size: 1.5rem;
+    font-weight: 900;
+    letter-spacing: .04em;
+    color: rgba(245,240,233,.96);
+}
+
+.astroFooter__brandSub{
+    margin-top: 4px;
+    color: rgba(245,240,233,.72);
+    font-size: .98rem;
+    font-weight: 600;
+}
+
+.astroFooter__text{
+    margin: 0;
+    color: var(--muted);
+    line-height: 1.7;
+    max-width: 30ch;
+}
+
+.astroFooter__contactBlock{
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.astroFooter__contactLink{
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    width: fit-content;
+    color: rgba(245,240,233,.9);
+    text-decoration: none;
+    transition: opacity .14s ease, transform .14s ease;
+}
+
+.astroFooter__contactLink:hover{
+    opacity: 1;
+    transform: translateY(-1px);
+}
+
+.astroFooter__socials{
+    display: flex;
+    gap: 10px;
+    margin-top: 2px;
+}
+
+.astroFooter__social{
+    width: 42px;
+    height: 42px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(224,197,143,.18);
+    background: rgba(224,197,143,.08);
+    color: rgba(245,240,233,.92);
+    text-decoration: none;
+    transition: transform .14s ease, border-color .14s ease, background .14s ease;
+}
+
+.astroFooter__social:hover{
+    transform: translateY(-1px);
+    border-color: rgba(224,197,143,.34);
+    background: rgba(224,197,143,.14);
+}
+
+.astroFooter__col{
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.astroFooter__title{
+    margin: 0;
+    color: rgba(245,240,233,.96);
+    font-size: 1.05rem;
+    font-weight: 800;
+}
+
+.astroFooter__list{
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 12px;
+}
+
+.astroFooter__list a{
+    color: rgba(245,240,233,.78);
+    text-decoration: none;
+    line-height: 1.45;
+    transition: color .14s ease, transform .14s ease;
+}
+
+.astroFooter__list a:hover{
+    color: var(--accent);
+}
+
+.astroFooter__meta{
+    display: grid;
+    gap: 10px;
+    color: rgba(245,240,233,.78);
+    line-height: 1.55;
+}
+
+.astroFooter__meta p{
+    margin: 0;
+}
+
+.astroFooter__meta strong{
+    color: rgba(245,240,233,.94);
+}
+
+.astroFooter__bottom{
+    margin-top: 26px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(224,197,143,.18);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.astroFooter__bottom p{
+    margin: 0;
+    color: rgba(245,240,233,.72);
+    line-height: 1.5;
+}
+
+.astroFooter__bottomLinks{
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+}
+
+.astroFooter__bottomLinks a{
+    color: rgba(245,240,233,.78);
+    text-decoration: none;
+}
+
+.astroFooter__bottomLinks a:hover{
+    color: var(--accent);
+}
+
+@media (max-width: 980px){
+    .astroFooter__grid{
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (max-width: 640px){
+    .astroFooter{
+        padding: 0 10px 20px;
+    }
+
+    .astroFooter__inner{
+        padding: 20px 18px 18px;
+        border-radius: 22px;
+    }
+
+    .astroFooter__grid{
+        grid-template-columns: 1fr;
+        gap: 22px;
+    }
+
+    .astroFooter__brandName{
+        font-size: 1.2rem;
+    }
+
+    .astroFooter__bottom{
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
