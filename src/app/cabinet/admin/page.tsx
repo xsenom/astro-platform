@@ -105,6 +105,19 @@ type SegmentKey =
     | "no_paid"
     | "calculations"
     | "inactive_30d"
+    | "manual_list"
+    | "zodiac_aries"
+    | "zodiac_taurus"
+    | "zodiac_gemini"
+    | "zodiac_cancer"
+    | "zodiac_leo"
+    | "zodiac_virgo"
+    | "zodiac_libra"
+    | "zodiac_scorpio"
+    | "zodiac_sagittarius"
+    | "zodiac_capricorn"
+    | "zodiac_aquarius"
+    | "zodiac_pisces"
     | "all";
 
 type EmailCampaignRow = {
@@ -120,6 +133,17 @@ type EmailCampaignRow = {
 };
 
 type EmailSegmentCounts = Record<SegmentKey, number>;
+
+type DashboardStats = {
+    total_revenue_cents: number;
+    total_paid_orders: number;
+    average_check_cents: number;
+    total_related_profiles: number;
+    total_marketing_contacts: number;
+    email_opened: number;
+    email_delivered: number;
+    email_failed: number;
+};
 
 type BuilderState = {
     preheader: string;
@@ -144,6 +168,19 @@ const SEGMENT_LABELS: Record<SegmentKey, string> = {
     no_paid: "Без оплат",
     calculations: "Пользователи с расчётами",
     inactive_30d: "Неактивные 30 дней",
+    manual_list: "Ручной список (email)",
+    zodiac_aries: "Зодиак: Овен",
+    zodiac_taurus: "Зодиак: Телец",
+    zodiac_gemini: "Зодиак: Близнецы",
+    zodiac_cancer: "Зодиак: Рак",
+    zodiac_leo: "Зодиак: Лев",
+    zodiac_virgo: "Зодиак: Дева",
+    zodiac_libra: "Зодиак: Весы",
+    zodiac_scorpio: "Зодиак: Скорпион",
+    zodiac_sagittarius: "Зодиак: Стрелец",
+    zodiac_capricorn: "Зодиак: Козерог",
+    zodiac_aquarius: "Зодиак: Водолей",
+    zodiac_pisces: "Зодиак: Рыбы",
     all: "Вся база",
 };
 
@@ -153,6 +190,19 @@ const SEGMENT_DESCRIPTIONS: Record<SegmentKey, string> = {
     no_paid: "Пользователи без оплаченных заказов.",
     calculations: "Пользователи, у которых есть расчёты.",
     inactive_30d: "Пользователи без активности последние 30 дней.",
+    manual_list: "Ручной список адресов. Новые email автоматически сохраняются в контакты.",
+    zodiac_aries: "Пользователи со знаком Овен.",
+    zodiac_taurus: "Пользователи со знаком Телец.",
+    zodiac_gemini: "Пользователи со знаком Близнецы.",
+    zodiac_cancer: "Пользователи со знаком Рак.",
+    zodiac_leo: "Пользователи со знаком Лев.",
+    zodiac_virgo: "Пользователи со знаком Дева.",
+    zodiac_libra: "Пользователи со знаком Весы.",
+    zodiac_scorpio: "Пользователи со знаком Скорпион.",
+    zodiac_sagittarius: "Пользователи со знаком Стрелец.",
+    zodiac_capricorn: "Пользователи со знаком Козерог.",
+    zodiac_aquarius: "Пользователи со знаком Водолей.",
+    zodiac_pisces: "Пользователи со знаком Рыбы.",
     all: "Вся пользовательская база. Для этого сегмента нужно подтверждение.",
 };
 
@@ -162,6 +212,19 @@ const SEGMENT_ORDER: SegmentKey[] = [
     "no_paid",
     "calculations",
     "inactive_30d",
+    "manual_list",
+    "zodiac_aries",
+    "zodiac_taurus",
+    "zodiac_gemini",
+    "zodiac_cancer",
+    "zodiac_leo",
+    "zodiac_virgo",
+    "zodiac_libra",
+    "zodiac_scorpio",
+    "zodiac_sagittarius",
+    "zodiac_capricorn",
+    "zodiac_aquarius",
+    "zodiac_pisces",
     "all",
 ];
 
@@ -478,6 +541,19 @@ export default function AdminPage() {
         no_paid: 0,
         calculations: 0,
         inactive_30d: 0,
+        manual_list: 0,
+        zodiac_aries: 0,
+        zodiac_taurus: 0,
+        zodiac_gemini: 0,
+        zodiac_cancer: 0,
+        zodiac_leo: 0,
+        zodiac_virgo: 0,
+        zodiac_libra: 0,
+        zodiac_scorpio: 0,
+        zodiac_sagittarius: 0,
+        zodiac_capricorn: 0,
+        zodiac_aquarius: 0,
+        zodiac_pisces: 0,
         all: 0,
     });
 
@@ -487,6 +563,17 @@ export default function AdminPage() {
     const [mailText, setMailText] = useState("");
     const [mailSending, setMailSending] = useState(false);
     const [mailResult, setMailResult] = useState<string | null>(null);
+    const [manualRecipientsInput, setManualRecipientsInput] = useState("");
+    const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
+        total_revenue_cents: 0,
+        total_paid_orders: 0,
+        average_check_cents: 0,
+        total_related_profiles: 0,
+        total_marketing_contacts: 0,
+        email_opened: 0,
+        email_delivered: 0,
+        email_failed: 0,
+    });
     const [builderState, setBuilderState] = useState<BuilderState>(DEFAULT_BUILDER_STATE);
     const [builderMode, setBuilderMode] = useState<"builder" | "html">("builder");
     const [builderImageName, setBuilderImageName] = useState<string | null>(null);
@@ -997,9 +1084,32 @@ export default function AdminPage() {
                     no_paid: 0,
                     calculations: 0,
                     inactive_30d: 0,
+                    manual_list: 0,
+                    zodiac_aries: 0,
+                    zodiac_taurus: 0,
+                    zodiac_gemini: 0,
+                    zodiac_cancer: 0,
+                    zodiac_leo: 0,
+                    zodiac_virgo: 0,
+                    zodiac_libra: 0,
+                    zodiac_scorpio: 0,
+                    zodiac_sagittarius: 0,
+                    zodiac_capricorn: 0,
+                    zodiac_aquarius: 0,
+                    zodiac_pisces: 0,
                     all: 0,
                 }
             );
+            setDashboardStats(json.dashboard_stats || {
+                total_revenue_cents: 0,
+                total_paid_orders: 0,
+                average_check_cents: 0,
+                total_related_profiles: 0,
+                total_marketing_contacts: 0,
+                email_opened: 0,
+                email_delivered: 0,
+                email_failed: 0,
+            });
         } catch (e) {
             setErr(e instanceof Error ? e.message : "Не удалось загрузить админку.");
         } finally {
@@ -1299,6 +1409,10 @@ export default function AdminPage() {
                     html: mailHtml,
                     text: mailText,
                     test_mode: false,
+                    manual_emails: manualRecipientsInput
+                        .split(/[,\n; ]+/)
+                        .map((item) => item.trim().toLowerCase())
+                        .filter(Boolean),
                 }),
             });
 
@@ -1894,6 +2008,30 @@ export default function AdminPage() {
                                 Сегмент: <strong>{SEGMENT_LABELS[selectedSegment]}</strong> · получателей:{" "}
                                 <strong>{emailSegments[selectedSegment] ?? 0}</strong>
                             </div>
+
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
+                                <div style={{ padding: 10, borderRadius: 10, background: "rgba(10,18,38,.25)", border: "1px solid rgba(224,197,143,.12)", fontSize: 12 }}>
+                                    Выручка: <strong>{(dashboardStats.total_revenue_cents / 100).toLocaleString("ru-RU")} ₽</strong>
+                                </div>
+                                <div style={{ padding: 10, borderRadius: 10, background: "rgba(10,18,38,.25)", border: "1px solid rgba(224,197,143,.12)", fontSize: 12 }}>
+                                    Оплачено заказов: <strong>{dashboardStats.total_paid_orders}</strong>
+                                </div>
+                                <div style={{ padding: 10, borderRadius: 10, background: "rgba(10,18,38,.25)", border: "1px solid rgba(224,197,143,.12)", fontSize: 12 }}>
+                                    Средний чек: <strong>{(dashboardStats.average_check_cents / 100).toLocaleString("ru-RU")} ₽</strong>
+                                </div>
+                                <div style={{ padding: 10, borderRadius: 10, background: "rgba(10,18,38,.25)", border: "1px solid rgba(224,197,143,.12)", fontSize: 12 }}>
+                                    Доп. анкеты: <strong>{dashboardStats.total_related_profiles}</strong>
+                                </div>
+                            </div>
+
+                            {selectedSegment === "manual_list" && (
+                                <textarea
+                                    value={manualRecipientsInput}
+                                    onChange={(e) => setManualRecipientsInput(e.target.value)}
+                                    placeholder="email1@example.com, email2@example.com"
+                                    style={{ ...inputStyle, minHeight: 90, resize: "vertical" }}
+                                />
+                            )}
 
                             <input
                                 value={mailSubject}
