@@ -2009,20 +2009,7 @@ export default function AdminPage() {
                                 <strong>{emailSegments[selectedSegment] ?? 0}</strong>
                             </div>
 
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8 }}>
-                                <div style={{ padding: 10, borderRadius: 10, background: "rgba(10,18,38,.25)", border: "1px solid rgba(224,197,143,.12)", fontSize: 12 }}>
-                                    Выручка: <strong>{(dashboardStats.total_revenue_cents / 100).toLocaleString("ru-RU")} ₽</strong>
-                                </div>
-                                <div style={{ padding: 10, borderRadius: 10, background: "rgba(10,18,38,.25)", border: "1px solid rgba(224,197,143,.12)", fontSize: 12 }}>
-                                    Оплачено заказов: <strong>{dashboardStats.total_paid_orders}</strong>
-                                </div>
-                                <div style={{ padding: 10, borderRadius: 10, background: "rgba(10,18,38,.25)", border: "1px solid rgba(224,197,143,.12)", fontSize: 12 }}>
-                                    Средний чек: <strong>{(dashboardStats.average_check_cents / 100).toLocaleString("ru-RU")} ₽</strong>
-                                </div>
-                                <div style={{ padding: 10, borderRadius: 10, background: "rgba(10,18,38,.25)", border: "1px solid rgba(224,197,143,.12)", fontSize: 12 }}>
-                                    Доп. анкеты: <strong>{dashboardStats.total_related_profiles}</strong>
-                                </div>
-                            </div>
+
 
                             {selectedSegment === "manual_list" && (
                                 <textarea
