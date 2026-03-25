@@ -75,7 +75,7 @@ export async function GET(req: NextRequest) {
             getAdminClient().from("calculations").select("id, user_id, calc_type, status, created_at, updated_at").order("created_at", { ascending: false }).limit(2000),
             getAdminClient()
                 .from("email_campaigns")
-                .select("id, created_at, segment_key, subject, status, recipients_count, sent_count, failed_count, created_by")
+                .select("id, created_at, segment_key, subject, status, recipients_count, sent_count, failed_count, opened_count, clicked_count, unsubscribed_count, created_by")
                 .order("created_at", { ascending: false })
                 .limit(20),
             getSegmentCounts(),
@@ -105,6 +105,8 @@ export async function GET(req: NextRequest) {
         const emailOpened = (deliveryRows ?? []).filter((row) => row.event_type === "opened").length;
         const emailDelivered = (deliveryRows ?? []).filter((row) => row.event_type === "delivered").length;
         const emailFailed = (deliveryRows ?? []).filter((row) => row.event_type === "failed").length;
+        const emailClicked = (deliveryRows ?? []).filter((row) => row.event_type === "clicked").length;
+        const emailUnsubscribed = (deliveryRows ?? []).filter((row) => row.event_type === "unsubscribed").length;
 
         return NextResponse.json({
             ok: true,
@@ -126,6 +128,8 @@ export async function GET(req: NextRequest) {
                 email_opened: emailOpened,
                 email_delivered: emailDelivered,
                 email_failed: emailFailed,
+                email_clicked: emailClicked,
+                email_unsubscribed: emailUnsubscribed,
             },
         });
     } catch (e) {
