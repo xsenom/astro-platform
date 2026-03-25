@@ -181,6 +181,42 @@ function getSmtpConfig() {
     return { host, port, username, password, secure };
 }
 
+function appendTrackingAndUnsubscribe({
+    html,
+    text,
+    recipientId,
+    campaignId,
+    origin,
+}: {
+    html: string;
+    text: string;
+    recipientId: string;
+    campaignId: string;
+    origin: string;
+}) {
+    const openUrl = `${origin}/api/email/open?campaign=${encodeURIComponent(campaignId)}&recipient=${encodeURIComponent(recipientId)}`;
+    const unsubscribeUrl = `${origin}/api/email/unsubscribe?campaign=${encodeURIComponent(campaignId)}&recipient=${encodeURIComponent(recipientId)}`;
+
+    const trackedHtml = html
+        ? html.replace(/href=(["'])(https?:\/\/[^"']+)\1/gi, (_match, quote: string, url: string) => {
+              const trackedUrl = `${origin}/api/email/click?campaign=${encodeURIComponent(campaignId)}&recipient=${encodeURIComponent(recipientId)}&url=${encodeURIComponent(url)}`;
+              return `href=${quote}${trackedUrl}${quote}`;
+          })
+        : "";
+
+    const unsubscribeBlock = `<div style="margin-top:24px;font-size:12px;color:#6b7280;text-align:center">Если вы не хотите получать такие письма, <a href="${unsubscribeUrl}" style="color:#6b7280;text-decoration:underline">отпишитесь от рассылки</a>.</div>`;
+    const openPixel = `<img src="${openUrl}" width="1" height="1" alt="" style="display:block;border:0;outline:none" />`;
+
+    const finalHtml = trackedHtml
+        ? `${trackedHtml}${unsubscribeBlock}${openPixel}`
+        : "";
+    const finalText = text
+        ? `${text}\n\nОтписаться от рассылки: ${unsubscribeUrl}`
+        : `Отписаться от рассылки: ${unsubscribeUrl}`;
+
+    return { html: finalHtml, text: finalText };
+}
+
 export async function POST(req: NextRequest) {
     const admin = await getAdminAuth(req);
     if (!admin) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
@@ -215,6 +251,8 @@ export async function POST(req: NextRequest) {
     const from = getEnv("SMTP_FROM");
     const replyTo = getEnv("SMTP_REPLY_TO") || from;
     if (!from) return NextResponse.json({ ok: false, error: "Не задан SMTP_FROM." }, { status: 500 });
+
+    const origin = getEnv("SITE_URL") || getEnv("NEXT_PUBLIC_SITE_URL") || req.nextUrl.origin;
 
     let campaignId: string | null = null;
     let auditWarning: string | null = null;
@@ -268,29 +306,89 @@ export async function POST(req: NextRequest) {
     let sent = 0;
     let failed = 0;
     const recipientLogs: Array<Record<string, string | null>> = [];
+    const deliveryEvents: Array<Record<string, string | null>> = [];
 
     for (const recipient of recipients) {
+        let recipientRowId: string | null = null;
+        if (campaignId) {
+            const preInsert = await getAdminClient()
+                .from("email_campaign_recipients")
+                .insert({
+                    campaign_id: campaignId,
+                    profile_id: recipient.profile_id ?? null,
+                    email: recipient.email,
+                    status: "pending",
+                    error_message: null,
+                })
+                .select("id")
+                .single();
+            if (!preInsert.error) {
+                recipientRowId = String(preInsert.data.id);
+            }
+        }
+
+        const message = campaignId && recipientRowId
+            ? appendTrackingAndUnsubscribe({
+                  html,
+                  text,
+                  campaignId,
+                  recipientId: recipientRowId,
+                  origin,
+              })
+            : { html, text };
+
         try {
             await sendSmtpMail({
                 ...smtp,
                 from,
                 to: recipient.email,
                 subject,
-                text: text || undefined,
-                html: html || undefined,
+                text: message.text || undefined,
+                html: message.html || undefined,
                 replyTo: replyTo || undefined,
             });
             sent += 1;
-            recipientLogs.push({ campaign_id: campaignId, profile_id: recipient.profile_id ?? null, email: recipient.email, status: "sent", error_message: null });
+            if (campaignId && recipientRowId) {
+                await getAdminClient()
+                    .from("email_campaign_recipients")
+                    .update({ status: "sent", error_message: null })
+                    .eq("id", recipientRowId);
+                deliveryEvents.push({
+                    recipient_id: recipientRowId,
+                    campaign_id: campaignId,
+                    profile_id: recipient.profile_id ?? null,
+                    email: recipient.email,
+                    event_type: "delivered",
+                    event_status: "ok",
+                });
+            } else {
+                recipientLogs.push({ campaign_id: campaignId, profile_id: recipient.profile_id ?? null, email: recipient.email, status: "sent", error_message: null });
+            }
         } catch (error) {
             failed += 1;
-            recipientLogs.push({
-                campaign_id: campaignId,
-                profile_id: recipient.profile_id ?? null,
-                email: recipient.email,
-                status: "failed",
-                error_message: error instanceof Error ? error.message : String(error),
-            });
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            if (campaignId && recipientRowId) {
+                await getAdminClient()
+                    .from("email_campaign_recipients")
+                    .update({ status: "failed", error_message: errorMessage })
+                    .eq("id", recipientRowId);
+                deliveryEvents.push({
+                    recipient_id: recipientRowId,
+                    campaign_id: campaignId,
+                    profile_id: recipient.profile_id ?? null,
+                    email: recipient.email,
+                    event_type: "failed",
+                    event_status: "error",
+                });
+            } else {
+                recipientLogs.push({
+                    campaign_id: campaignId,
+                    profile_id: recipient.profile_id ?? null,
+                    email: recipient.email,
+                    status: "failed",
+                    error_message: errorMessage,
+                });
+            }
         }
     }
 
@@ -299,6 +397,9 @@ export async function POST(req: NextRequest) {
         if (recipientsInsert.error && recipientsInsert.error.message.toLowerCase().includes("stack depth limit exceeded")) {
             auditWarning = auditWarning || "Логи получателей не сохранились: вероятна рекурсия в БД (stack depth limit exceeded).";
         }
+    }
+    if (deliveryEvents.length) {
+        await getAdminClient().from("email_delivery_events").insert(deliveryEvents);
     }
 
     const status = failed > 0 ? (sent > 0 ? (isTest ? "partial_test" : "partial") : (isTest ? "failed_test" : "failed")) : (isTest ? "sent_test" : "sent");
