@@ -494,6 +494,21 @@ export default function ProfileDataPage() {
                             Требуется оплата 490 ₽
                         </div>
                     )}
+                    <a
+                        href="/cabinet/profile/related"
+                        style={{
+                            padding: "6px 10px",
+                            borderRadius: 999,
+                            border: "1px solid rgba(224,197,143,.18)",
+                            background: "rgba(224,197,143,.10)",
+                            color: "rgba(245,240,233,.9)",
+                            fontSize: 12,
+                            fontWeight: 800,
+                            textDecoration: "none",
+                        }}
+                    >
+                        Добавить анкету
+                    </a>
                 </div>
             </div>
 
@@ -647,5 +662,4 @@ export default function ProfileDataPage() {
         </div>
     );
 }
-
 

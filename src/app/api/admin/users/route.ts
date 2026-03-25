@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminClient } from "@/lib/admin/auth";
+import { getZodiacSign } from "@/lib/astro/zodiac";
 
 export const runtime = "nodejs";
 
@@ -13,12 +14,21 @@ type UpdateUserPayload = {
     birth_date?: string | null;
     birth_time?: string | null;
     birth_city?: string | null;
+    utm_source?: string | null;
+    utm_medium?: string | null;
+    utm_campaign?: string | null;
+    utm_term?: string | null;
+    utm_content?: string | null;
+    utm_referrer?: string | null;
+    marketing_email_opt_in?: boolean;
+    is_blocked?: boolean;
 };
 
 type UserActionPayload = {
     action?: string;
     userId?: string;
     email?: string | null;
+    targetEmail?: string | null;
 };
 
 function parsePositiveInt(value: string | null, fallback: number) {
@@ -71,7 +81,7 @@ export async function GET(req: NextRequest) {
 
         let query = getAdminClient()
             .from("profiles")
-            .select("id, email, full_name, birth_date, birth_time, birth_city, created_at, updated_at", {
+            .select("id, email, full_name, birth_date, birth_time, birth_city, zodiac_sign, utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_referrer, marketing_email_opt_in, is_blocked, created_at, updated_at", {
                 count: "exact",
             })
             .order("created_at", { ascending: false });
@@ -93,12 +103,21 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
         }
 
+        const ids = (data ?? []).map((row) => row.id).filter(Boolean);
+        const { data: relatedRows } = ids.length
+            ? await getAdminClient().from("user_related_profiles").select("user_id").in("user_id", ids)
+            : { data: [] as Array<{ user_id: string }> };
+        const relatedCounts = (relatedRows ?? []).reduce<Record<string, number>>((acc, row) => {
+            acc[row.user_id] = (acc[row.user_id] ?? 0) + 1;
+            return acc;
+        }, {});
+
         const total = count ?? 0;
         const totalPages = Math.max(Math.ceil(total / pageSize), 1);
 
         return NextResponse.json({
             ok: true,
-            profiles: data ?? [],
+            profiles: (data ?? []).map((row) => ({ ...row, related_profiles_count: relatedCounts[row.id] ?? 0 })),
             pagination: {
                 page,
                 pageSize,
@@ -132,6 +151,7 @@ export async function PATCH(req: NextRequest) {
         const birthDate = normalizeOptional(body.birth_date);
         const birthTime = normalizeOptional(body.birth_time);
         const birthCity = normalizeOptional(body.birth_city);
+        const zodiacSign = getZodiacSign(birthDate);
 
         const adminClient = getAdminClient();
 
@@ -150,10 +170,19 @@ export async function PATCH(req: NextRequest) {
                 birth_date: birthDate,
                 birth_time: birthTime,
                 birth_city: birthCity,
+                zodiac_sign: zodiacSign,
+                utm_source: normalizeOptional(body.utm_source),
+                utm_medium: normalizeOptional(body.utm_medium),
+                utm_campaign: normalizeOptional(body.utm_campaign),
+                utm_term: normalizeOptional(body.utm_term),
+                utm_content: normalizeOptional(body.utm_content),
+                utm_referrer: normalizeOptional(body.utm_referrer),
+                marketing_email_opt_in: body.marketing_email_opt_in !== false,
+                is_blocked: body.is_blocked === true,
                 updated_at: new Date().toISOString(),
             })
             .eq("id", userId)
-            .select("id, email, full_name, birth_date, birth_time, birth_city, created_at, updated_at")
+            .select("id, email, full_name, birth_date, birth_time, birth_city, zodiac_sign, utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_referrer, marketing_email_opt_in, is_blocked, created_at, updated_at")
             .single();
 
         if (error) {
@@ -173,8 +202,41 @@ export async function POST(req: NextRequest) {
 
     try {
         const body = (await req.json()) as UserActionPayload;
-        if (body.action !== "send_password_reset") {
-            return NextResponse.json({ ok: false, error: "Неизвестное действие." }, { status: 400 });
+        const adminClient = getAdminClient();
+
+        if (body.action === "merge_by_email") {
+            const targetEmail = normalizeOptional(body.targetEmail)?.toLowerCase() ?? null;
+            if (!targetEmail) {
+                return NextResponse.json({ ok: false, error: "Укажите email для объединения." }, { status: 400 });
+            }
+
+            const { data: duplicates, error: duplicatesError } = await adminClient
+                .from("profiles")
+                .select("id, created_at")
+                .eq("email", targetEmail)
+                .order("created_at", { ascending: true });
+
+            if (duplicatesError) {
+                return NextResponse.json({ ok: false, error: duplicatesError.message }, { status: 500 });
+            }
+
+            if (!duplicates || duplicates.length < 2) {
+                return NextResponse.json({ ok: true, message: "Дубликаты для объединения не найдены." });
+            }
+
+            const primaryUserId = duplicates[0].id as string;
+            const duplicateIds = duplicates.slice(1).map((row) => row.id as string);
+
+            for (const duplicateId of duplicateIds) {
+                await adminClient.from("orders").update({ user_id: primaryUserId }).eq("user_id", duplicateId);
+                await adminClient.from("calculations").update({ user_id: primaryUserId }).eq("user_id", duplicateId);
+                await adminClient.from("support_threads").update({ user_id: primaryUserId }).eq("user_id", duplicateId);
+                await adminClient.from("user_related_profiles").update({ user_id: primaryUserId }).eq("user_id", duplicateId);
+            }
+
+            await adminClient.from("profiles").delete().in("id", duplicateIds);
+
+            return NextResponse.json({ ok: true, message: `Объединили ${duplicateIds.length + 1} карточек.`, primaryUserId });
         }
 
         const userId = body.userId?.trim();
@@ -182,8 +244,31 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: false, error: "Некорректный userId." }, { status: 400 });
         }
 
+        if (body.action === "set_blocked") {
+            const { error } = await adminClient
+                .from("profiles")
+                .update({ is_blocked: true, updated_at: new Date().toISOString() })
+                .eq("id", userId);
+
+            if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+            return NextResponse.json({ ok: true, message: "Пользователь заблокирован." });
+        }
+
+        if (body.action === "set_unblocked") {
+            const { error } = await adminClient
+                .from("profiles")
+                .update({ is_blocked: false, updated_at: new Date().toISOString() })
+                .eq("id", userId);
+
+            if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+            return NextResponse.json({ ok: true, message: "Пользователь разблокирован." });
+        }
+
+        if (body.action !== "send_password_reset") {
+            return NextResponse.json({ ok: false, error: "Неизвестное действие." }, { status: 400 });
+        }
+
         let email = normalizeOptional(body.email)?.toLowerCase() ?? null;
-        const adminClient = getAdminClient();
 
         if (!email) {
             const { data: profile, error: profileError } = await adminClient
