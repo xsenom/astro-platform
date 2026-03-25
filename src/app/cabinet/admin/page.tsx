@@ -129,6 +129,9 @@ type EmailCampaignRow = {
     recipients_count: number;
     sent_count: number;
     failed_count: number;
+    opened_count: number;
+    clicked_count: number;
+    unsubscribed_count: number;
     created_by: string | null;
 };
 
@@ -143,6 +146,8 @@ type DashboardStats = {
     email_opened: number;
     email_delivered: number;
     email_failed: number;
+    email_clicked: number;
+    email_unsubscribed: number;
 };
 
 type BuilderState = {
@@ -573,6 +578,8 @@ export default function AdminPage() {
         email_opened: 0,
         email_delivered: 0,
         email_failed: 0,
+        email_clicked: 0,
+        email_unsubscribed: 0,
     });
     const [builderState, setBuilderState] = useState<BuilderState>(DEFAULT_BUILDER_STATE);
     const [builderMode, setBuilderMode] = useState<"builder" | "html">("builder");
@@ -1109,6 +1116,8 @@ export default function AdminPage() {
                 email_opened: 0,
                 email_delivered: 0,
                 email_failed: 0,
+                email_clicked: 0,
+                email_unsubscribed: 0,
             });
         } catch (e) {
             setErr(e instanceof Error ? e.message : "Не удалось загрузить админку.");
@@ -2323,7 +2332,7 @@ export default function AdminPage() {
                             <div
                                 style={{
                                     display: "grid",
-                                    gridTemplateColumns: "180px 1fr 140px 160px 160px",
+                                    gridTemplateColumns: "160px 1fr 120px 220px 160px",
                                     gap: 10,
                                     padding: "10px 10px",
                                     borderRadius: 14,
@@ -2337,12 +2346,12 @@ export default function AdminPage() {
                                 <div>Campaign</div>
                                 <div>Subject / Segment</div>
                                 <div>Status</div>
-                                <div>Counts</div>
+                                <div>Метрики</div>
                                 <div>Created</div>
                             </div>
 
                             {emailCampaigns.map((campaign) => (
-                                <GridRow key={campaign.id} cols="180px 1fr 140px 160px 160px">
+                                <GridRow key={campaign.id} cols="160px 1fr 120px 220px 160px">
                                     <Mono>{String(campaign.id).slice(0, 8)}…</Mono>
                                     <div>
                                         <div style={{ fontWeight: 900 }}>{campaign.subject}</div>
@@ -2354,7 +2363,13 @@ export default function AdminPage() {
                                     <div style={{ fontSize: 12, opacity: 0.82 }}>
                                         Всего: {campaign.recipients_count}
                                         <br />
-                                        Успех: {campaign.sent_count}
+                                        Доставлено: {campaign.sent_count}
+                                        <br />
+                                        Открыли: {campaign.opened_count ?? 0}
+                                        <br />
+                                        Клики: {campaign.clicked_count ?? 0}
+                                        <br />
+                                        Отписки: {campaign.unsubscribed_count ?? 0}
                                         <br />
                                         Ошибки: {campaign.failed_count}
                                     </div>
