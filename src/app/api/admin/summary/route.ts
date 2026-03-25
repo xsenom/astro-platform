@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
 
     try {
 
-        const [ordersRes, itemsRes, productsRes, pciRes, calculationsRes, campaignsRes, segmentCounts, deliveryStatsRes] = await Promise.all([
+        const [ordersRes, itemsRes, productsRes, pciRes, calculationsRes, segmentCounts, deliveryStatsRes] = await Promise.all([
             getAdminClient()
                 .from("orders")
                 .select("id, user_id, status, amount_cents, currency, provider, provider_order_id, paid_at, created_at")
@@ -73,11 +73,6 @@ export async function GET(req: NextRequest) {
             getAdminClient().from("products").select("id, title, price_cents, currency").order("title", { ascending: true }).limit(2000),
             getAdminClient().from("product_calc_items").select("id, product_id, calc_type_id, qty").limit(5000),
             getAdminClient().from("calculations").select("id, user_id, calc_type, status, created_at, updated_at").order("created_at", { ascending: false }).limit(2000),
-            getAdminClient()
-                .from("email_campaigns")
-                .select("id, created_at, segment_key, subject, status, recipients_count, sent_count, failed_count, opened_count, clicked_count, unsubscribed_count, created_by")
-                .order("created_at", { ascending: false })
-                .limit(20),
             getSegmentCounts(),
             getAdminClient().from("email_delivery_events").select("event_type, event_status"),
 
@@ -89,7 +84,29 @@ export async function GET(req: NextRequest) {
         if (pciRes.error) return NextResponse.json({ ok: false, error: pciRes.error.message }, { status: 500 });
         if (calculationsRes.error) return NextResponse.json({ ok: false, error: calculationsRes.error.message }, { status: 500 });
 
-        const campaigns = campaignsRes.error ? [] : campaignsRes.data ?? [];
+        const campaignsWithMetricsRes = await getAdminClient()
+            .from("email_campaigns")
+            .select("id, created_at, segment_key, subject, status, recipients_count, sent_count, failed_count, opened_count, clicked_count, unsubscribed_count, created_by")
+            .order("created_at", { ascending: false })
+            .limit(20);
+
+        let campaigns = campaignsWithMetricsRes.data ?? [];
+        if (campaignsWithMetricsRes.error) {
+            const campaignsLegacyRes = await getAdminClient()
+                .from("email_campaigns")
+                .select("id, created_at, segment_key, subject, status, recipients_count, sent_count, failed_count, created_by")
+                .order("created_at", { ascending: false })
+                .limit(20);
+
+            if (!campaignsLegacyRes.error) {
+                campaigns = (campaignsLegacyRes.data ?? []).map((campaign) => ({
+                    ...campaign,
+                    opened_count: 0,
+                    clicked_count: 0,
+                    unsubscribed_count: 0,
+                }));
+            }
+        }
 
         const orders = ordersRes.data ?? [];
         const paidOrders = orders.filter((order) => order.status === "paid" || order.paid_at);
