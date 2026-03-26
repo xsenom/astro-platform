@@ -6,6 +6,10 @@ type PdfRequestBody = {
     name?: string;
     birth_date?: string;
     birth_time?: string;
+    banner_url?: string;
+    title?: string;
+    template?: string;
+    file_name?: string;
 };
 
 class RouteError extends Error {
@@ -36,6 +40,10 @@ export async function POST(req: NextRequest) {
         const name = body.name?.trim() || "Клиент";
         const birthDate = body.birth_date?.trim();
         const birthTime = body.birth_time?.trim();
+        const bannerUrl = body.banner_url?.trim();
+        const title = body.title?.trim();
+        const template = body.template?.trim();
+        const customFileName = body.file_name?.trim();
 
         if (!content || !summary || !birthDate || !birthTime) {
             throw new RouteError("Недостаточно данных для сборки PDF.", 400);
@@ -47,6 +55,9 @@ export async function POST(req: NextRequest) {
             name,
             birth_date: formatBirthDate(birthDate),
             birth_time: birthTime,
+            ...(bannerUrl ? { banner_url: bannerUrl } : {}),
+            ...(title ? { title } : {}),
+            ...(template ? { template } : {}),
         };
 
         const requestPdf = async (mode: "json" | "form") =>
@@ -83,7 +94,8 @@ export async function POST(req: NextRequest) {
         }
 
         const bytes = await response.arrayBuffer();
-        const fileName = `БЖК_${name}_${formatBirthDate(birthDate)}.pdf`;
+        const fileName =
+            customFileName || `БЖК_${name}_${formatBirthDate(birthDate)}.pdf`;
 
         return new NextResponse(bytes, {
             headers: {
