@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
     AnimatedDots,
     AstroLoading,
@@ -44,7 +45,18 @@ import {
 } from "@/components/cabinet/calculations/utils";
 import { supabase } from "@/lib/supabase/client";
 
+const URANUS_GEMINI_PRODUCT: ProductRow = {
+    code: "uranus_gemini",
+    title: "Уран в Близнецах",
+    description: "Персональный расчёт периода Урана в Близнецах через n8n.",
+    price_rub: 3900,
+    is_free: false,
+    is_active: true,
+    sort_order: 999,
+};
+
 export default function CalculationsPage() {
+    const searchParams = useSearchParams();
     const API =
         process.env.NEXT_PUBLIC_ASTRO_API_BASE?.trim() || "http://127.0.0.1:8011";
 
@@ -65,6 +77,7 @@ export default function CalculationsPage() {
         week: false,
         month: false,
         big_calendar: false,
+        uranus_gemini: false,
     });
 
     const [savedMap, setSavedMap] = useState<
@@ -92,6 +105,7 @@ export default function CalculationsPage() {
     });
 
     const interpretationRequestRef = useRef<string | null>(null);
+    const autoLaunchCalcRef = useRef<string | null>(null);
 
     const [activeNatalInterpretationTitle, setActiveNatalInterpretationTitle] =
         useState<string | null>(null);
@@ -315,6 +329,20 @@ export default function CalculationsPage() {
         setActiveNatalInterpretationTitle(null);
     }, [interpretation.text, result?.kind]);
 
+    useEffect(() => {
+        const calcCode = searchParams.get("calc");
+        if (!calcCode) return;
+        if (profileLoading || loading) return;
+        if (autoLaunchCalcRef.current === calcCode) return;
+
+        if (calcCode !== "uranus_gemini") return;
+        if (!isPurchased("uranus_gemini")) return;
+
+        autoLaunchCalcRef.current = calcCode;
+        void runN8nCalculation("uranus_gemini");
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchParams, profileLoading, loading, accessMap.uranus_gemini]);
+
     function buildSavedMap(rows: SavedCalculationRow[]) {
         const now = new Date();
         const nextSaved: Partial<Record<CalcKind, SavedCalculationRow>> = {};
@@ -421,9 +449,16 @@ export default function CalculationsPage() {
                 setErr(
                     `Не удалось загрузить список расчётов: ${productsResp.error.message}`
                 );
-                setProducts([]);
+                setProducts([URANUS_GEMINI_PRODUCT]);
             } else {
-                setProducts((productsResp.data ?? []) as ProductRow[]);
+                const productRows = (productsResp.data ?? []) as ProductRow[];
+                const withUranus = productRows.some(
+                    (product) => product.code === "uranus_gemini"
+                )
+                    ? productRows
+                    : [...productRows, URANUS_GEMINI_PRODUCT];
+
+                setProducts(withUranus);
             }
 
             setAdminState({
@@ -437,6 +472,7 @@ export default function CalculationsPage() {
                 week: false,
                 month: false,
                 big_calendar: false,
+                uranus_gemini: false,
             };
 
             const productRows = (productsResp.data ?? []) as ProductRow[];
@@ -458,6 +494,7 @@ export default function CalculationsPage() {
                 nextAccess.week = true;
                 nextAccess.month = true;
                 nextAccess.big_calendar = true;
+                nextAccess.uranus_gemini = true;
             }
 
             setAccessMap(nextAccess);
@@ -948,6 +985,78 @@ export default function CalculationsPage() {
         }
     }
 
+    async function runN8nCalculation(
+        kind: "day" | "week" | "month" | "uranus_gemini"
+    ) {
+        if (!requireProfile()) return;
+
+        setLoading(true);
+        setActiveKind(kind);
+        resetResultState();
+
+        try {
+            const payload = {
+                calc_kind: kind,
+                question:
+                    kind === "uranus_gemini"
+                        ? "Сделай персональный расчёт «Уран в Близнецах» с практическими рекомендациями на ближайший период."
+                        : `Сделай персональный астрологический расчёт типа ${kind}.`,
+                profile: {
+                    birth_date: profile?.birth_date ?? null,
+                    birth_time: profile?.birth_time ?? null,
+                    birth_city: profile?.birth_city ?? null,
+                },
+                target_date: targetDate,
+            };
+
+            const res = await fetch("/api/n8n/calc", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+
+            const json = (await res.json().catch(() => null)) as
+                | { ok?: boolean; error?: string; data?: unknown }
+                | null;
+
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || `HTTP ${res.status}`);
+            }
+
+            const text =
+                typeof json.data === "string"
+                    ? json.data
+                    : JSON.stringify(json.data, null, 2);
+
+            setResult({
+                kind,
+                text: text || "Пустой ответ",
+                raw: json.data,
+            });
+            setResultMeta({
+                source: "fresh",
+                updatedAt: new Date().toISOString(),
+                expiresAt: null,
+            });
+
+            const key = buildInterpretationKey(kind, {
+                updated_at: new Date().toISOString(),
+                target_date: targetDate,
+                result_text: text,
+            });
+
+            interpretationRequestRef.current = key;
+            void loadInterpretation(kind, text, json.data, {
+                targetDate,
+            });
+        } catch (e: any) {
+            setErr(e?.message || "Ошибка расчёта через n8n");
+        } finally {
+            setLoading(false);
+            setActiveKind(null);
+        }
+    }
+
     async function runBigCalendar(forceFresh = false) {
         if (!requireProfile()) return;
 
@@ -1127,7 +1236,9 @@ export default function CalculationsPage() {
         await handleBigCalendarPdfDownload(pdfPayload);
     }
 
-    async function openPayment(kind: "day" | "week" | "month" | "big_calendar") {
+    async function openPayment(
+        kind: "day" | "week" | "month" | "big_calendar" | "uranus_gemini"
+    ) {
         try {
             setErr(null);
 
@@ -1211,11 +1322,11 @@ export default function CalculationsPage() {
         }
 
         if (kind === "big_calendar") {
-            void runBigCalendar();
+            void runBigCalendar(true);
             return;
         }
 
-        void openPurchasedResult(kind);
+        void runN8nCalculation(kind);
     }
 
     const showNatalResultBlock =
@@ -1352,7 +1463,7 @@ export default function CalculationsPage() {
                                                     ? "Открыть результат"
                                                     : "Выполнить расчёт"
                                                 : purchased
-                                                    ? "Открыть результат"
+                                                    ? "Сделать расчёт"
                                                     : `Купить за ${product.price_rub} ₽`}
                                     </button>
                                 </div>
@@ -1473,36 +1584,18 @@ export default function CalculationsPage() {
                                         >
                                             Купить за {product.price_rub} ₽
                                         </button>
-                                    ) : hasSaved ? (
-                                        <div
+                                    ) : purchased ? (
+                                        <button
+                                            onClick={() => void runBigCalendar(true)}
                                             style={{
-                                                display: "grid",
-                                                gap: 10,
-                                                width: "100%",
+                                                ...btn(),
+                                                minWidth: 240,
+                                                alignSelf: "center",
                                                 marginTop: "auto",
-                                                gridTemplateColumns: "1fr",
                                             }}
                                         >
-                                            <button
-                                                onClick={() => void openSavedBigCalendarPdf()}
-                                                style={{
-                                                    ...btn(),
-                                                    width: "100%",
-                                                }}
-                                            >
-                                                Открыть PDF
-                                            </button>
-
-                                            <button
-                                                onClick={() => void downloadSavedBigCalendarPdf()}
-                                                style={{
-                                                    ...btn(),
-                                                    width: "100%",
-                                                }}
-                                            >
-                                                Скачать PDF
-                                            </button>
-                                        </div>
+                                            Сделать расчёт
+                                        </button>
                                     ) : (
                                         <button
                                             disabled={!canRun || profileLoading || loading}

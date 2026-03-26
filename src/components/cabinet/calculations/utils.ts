@@ -73,6 +73,7 @@ export function getExpirationDate(row: SavedCalculationRow) {
     if (row.kind === "week") return endOfDay(addDays(anchor, 6));
     if (row.kind === "month") return endOfDay(addDays(anchor, 29));
     if (row.kind === "big_calendar") return endOfDay(addDays(anchor, 60));
+    if (row.kind === "uranus_gemini") return null;
 
     return null;
 }
@@ -91,6 +92,7 @@ export function formatExpiration(kind: CalcKind) {
     if (kind === "week") return "6 дней после даты прогноза";
     if (kind === "month") return "29 дней после даты прогноза";
     if (kind === "big_calendar") return "60 дней после даты прогноза";
+    if (kind === "uranus_gemini") return "без ограничения";
     return "без ограничения";
 }
 
@@ -119,6 +121,11 @@ export const loadingLabels: Record<CalcKind, string[]> = {
         "Открываем большой женский календарь",
         "Проверяем срок хранения результата",
         "Подготавливаем PDF и отображение",
+    ],
+    uranus_gemini: [
+        "Отправляем вопрос в n8n",
+        "Получаем персональный расчёт",
+        "Подготавливаем отображение результата",
     ],
 };
 

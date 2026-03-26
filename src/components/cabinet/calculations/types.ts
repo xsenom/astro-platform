@@ -1,11 +1,18 @@
-export type CalcKind = "natal" | "day" | "week" | "month" | "big_calendar";
+export type CalcKind =
+    | "natal"
+    | "day"
+    | "week"
+    | "month"
+    | "big_calendar"
+    | "uranus_gemini";
 
 export type ApiResult =
     | { kind: "natal"; text: string; meta?: any }
     | { kind: "day"; text: string; raw?: any }
     | { kind: "week"; text: string; raw?: any }
     | { kind: "month"; text: string; raw?: any }
-    | { kind: "big_calendar"; text: string; raw?: any };
+    | { kind: "big_calendar"; text: string; raw?: any }
+    | { kind: "uranus_gemini"; text: string; raw?: any };
 
 export type BirthProfile = {
     birth_date: string | null;
