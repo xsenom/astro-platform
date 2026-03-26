@@ -3,75 +3,80 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 const DEFAULT_WEBHOOK_URL =
-  "https://renudrafin.beget.app/webhook/c81b2f83-92ea-4aa8-95e0-d4b8237ad2e5";
+    "https://renudrafin.beget.app/webhook-test/c81b2f83-92ea-4aa8-95e0-d4b8237ad2e5";
 
 function getWebhookUrl(): string {
-  return (process.env.N8N_CALC_WEBHOOK_URL || DEFAULT_WEBHOOK_URL).trim();
+    return DEFAULT_WEBHOOK_URL.trim();
 }
 
 export async function POST(req: Request) {
-  try {
-    const body = await req.json().catch(() => ({}));
-    const question = typeof body?.question === "string" ? body.question.trim() : "";
+    try {
+        const body = await req.json().catch(() => null);
 
-    if (!question) {
-      return NextResponse.json(
-        { ok: false, error: "question is required" },
-        { status: 400 }
-      );
-    }
+        console.log("Incoming body:", body);
 
-    const webhookRes = await fetch(getWebhookUrl(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        question,
-        ...body,
-      }),
-      cache: "no-store",
-    });
+        if (!body || typeof body !== "object") {
+            return NextResponse.json(
+                { ok: false, error: "Invalid JSON body" },
+                { status: 400 }
+            );
+        }
 
-    const contentType = webhookRes.headers.get("content-type") || "";
+        const webhookUrl = getWebhookUrl();
+        console.log("Webhook URL:", webhookUrl);
 
-    if (contentType.includes("application/json")) {
-      const data = await webhookRes.json().catch(() => null);
-      if (!webhookRes.ok) {
+        const webhookRes = await fetch(webhookUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+            cache: "no-store",
+        });
+
+        const contentType = webhookRes.headers.get("content-type") || "";
+        const rawText = await webhookRes.text();
+
+        console.log("Webhook status:", webhookRes.status);
+        console.log("Webhook content-type:", contentType);
+        console.log("Webhook raw response:", rawText);
+
+        let parsed: unknown = rawText;
+        if (contentType.includes("application/json")) {
+            try {
+                parsed = JSON.parse(rawText);
+            } catch {
+                parsed = rawText;
+            }
+        }
+
+        if (!webhookRes.ok) {
+            return NextResponse.json(
+                {
+                    ok: false,
+                    error: `n8n webhook returned HTTP ${webhookRes.status}`,
+                    response: parsed,
+                },
+                { status: 502 }
+            );
+        }
+
+        return NextResponse.json({
+            ok: true,
+            data: parsed,
+        });
+    } catch (error: unknown) {
+        console.error("Route error:", error);
+
         return NextResponse.json(
-          {
-            ok: false,
-            error: `n8n webhook returned HTTP ${webhookRes.status}`,
-            data,
-          },
-          { status: 502 }
+            {
+                ok: false,
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : "failed to call n8n webhook",
+            },
+            { status: 500 }
         );
-      }
-
-      return NextResponse.json({ ok: true, data });
     }
-
-    const text = await webhookRes.text();
-
-    if (!webhookRes.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: `n8n webhook returned HTTP ${webhookRes.status}`,
-          data: text,
-        },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json({ ok: true, data: text });
-  } catch (error: unknown) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "failed to call n8n webhook",
-      },
-      { status: 500 }
-    );
-  }
 }

@@ -9,7 +9,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AstroBackdrop />
         <div className="appLayer">
         <div className="pageFrame">{children}</div>
-        <SiteFooter />
+            <SiteFooter />
         </div>
         </body>
         </html>

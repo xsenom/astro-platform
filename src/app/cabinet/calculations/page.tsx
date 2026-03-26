@@ -1116,23 +1116,44 @@ export default function CalculationsPage() {
             });
 
             const json = (await res.json().catch(() => null)) as
-                | { ok?: boolean; error?: string; data?: unknown }
+                | {
+                ok?: boolean;
+                error?: string;
+                data?: {
+                    ok?: boolean;
+                    text?: string;
+                    raw?: unknown;
+                } | string;
+            }
                 | null;
 
             if (!res.ok || !json?.ok) {
                 throw new Error(json?.error || `HTTP ${res.status}`);
             }
 
+            const payloadData = json.data;
             const text =
-                typeof json.data === "string"
-                    ? json.data
-                    : JSON.stringify(json.data, null, 2);
+                typeof payloadData === "string"
+                    ? payloadData
+                    : payloadData?.text ?? "";
+
+            if (!text) {
+                throw new Error("n8n не вернул текст расчёта");
+            }
 
             setResult({
                 kind: "uranus_gemini",
-                text: text || "Пустой ответ",
-                raw: json.data,
+                text,
+                raw: payloadData,
             });
+
+            setInterpretation({
+                loading: false,
+                text,
+                error: null,
+                model: "n8n",
+            });
+
             setResultMeta({
                 source: "fresh",
                 updatedAt: new Date().toISOString(),

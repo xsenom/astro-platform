@@ -35,7 +35,14 @@ type CampaignRecipient = {
 };
 
 function sanitizeRecipient(recipient: CampaignRecipient): CampaignRecipient {
-    return { id: recipient.id, email: recipient.email, full_name: recipient.full_name, profile_id: recipient.profile_id ?? recipient.id };
+    return {
+        id: recipient.id,
+        email: recipient.email,
+        full_name: recipient.full_name,
+        updated_at: recipient.updated_at ?? null,
+        zodiac_sign: recipient.zodiac_sign ?? null,
+        profile_id: recipient.profile_id ?? recipient.id,
+    };
 }
 
 const LIVE_SEGMENTS: Array<{ key: Exclude<SegmentKey, "admins_test">; label: string }> = [
@@ -64,107 +71,264 @@ function getEnv(name: string): string | null {
     return value && value.trim() ? value.trim() : null;
 }
 
+function uniqueEmails(values: string[]): string[] {
+    return [...new Set(values.map((v) => String(v || "").trim().toLowerCase()).filter(Boolean))];
+}
+
 async function getAdminRecipients(): Promise<CampaignRecipient[]> {
-    const { data: admins, error: adminsError } = await getAdminClient().from("admin_users").select("user_id");
-    if (adminsError) throw new Error(adminsError.message);
+    console.log("[email-campaigns] getAdminRecipients: start");
+
+    const { data: admins, error: adminsError } = await getAdminClient()
+        .from("admin_users")
+        .select("user_id");
+
+    if (adminsError) {
+        console.error("[email-campaigns] getAdminRecipients: admin_users error", adminsError);
+        throw new Error(adminsError.message);
+    }
 
     const adminIds = (admins ?? []).map((row) => row.user_id).filter(Boolean);
-    if (!adminIds.length) return [];
+
+    console.log("[email-campaigns] getAdminRecipients: adminIds", adminIds);
+
+    if (!adminIds.length) {
+        console.log("[email-campaigns] getAdminRecipients: no admin ids");
+        return [];
+    }
 
     const { data: profiles, error: profilesError } = await getAdminClient()
         .from("profiles")
-        .select("id, email, full_name")
+        .select("id, email, full_name, updated_at")
         .in("id", adminIds)
         .not("email", "is", null);
 
-    if (profilesError) throw new Error(profilesError.message);
+    if (profilesError) {
+        console.error("[email-campaigns] getAdminRecipients: profiles error", profilesError);
+        throw new Error(profilesError.message);
+    }
 
-    return (profiles ?? [])
-        .filter((profile) => typeof profile.email === "string" && profile.email.trim())
-        .map((profile) => ({
-            id: profile.id,
-            email: String(profile.email).trim(),
-            full_name: profile.full_name,
-            profile_id: profile.id,
-        }));
+    const result = (profiles ?? [])
+        .map((row) => ({
+            id: String(row.id),
+            email: String(row.email || "").trim().toLowerCase(),
+            full_name: row.full_name ?? null,
+            updated_at: row.updated_at ?? null,
+            profile_id: String(row.id),
+        }))
+        .filter((row) => row.email)
+        .map(sanitizeRecipient);
+
+    console.log("[email-campaigns] getAdminRecipients: result count", result.length);
+
+    return result;
 }
 
-async function getRecipients(segment: Exclude<SegmentKey, "admins_test">, manualEmails: string[] = []): Promise<CampaignRecipient[]> {
+async function getBaseRecipients(): Promise<CampaignRecipient[]> {
+    console.log("[email-campaigns] getBaseRecipients: start");
+
     const { data: profiles, error: profilesError } = await getAdminClient()
         .from("profiles")
         .select("id, email, full_name, updated_at, zodiac_sign, marketing_email_opt_in, is_blocked")
-        .not("email", "is", null);
+        .not("email", "is", null)
+        .eq("marketing_email_opt_in", true)
+        .eq("is_blocked", false);
 
-    if (profilesError) throw new Error(profilesError.message);
+    if (profilesError) {
+        console.error("[email-campaigns] getBaseRecipients: profiles error", profilesError);
+        throw new Error(profilesError.message);
+    }
 
-    const recipients = (profiles ?? [])
-        .filter((profile) => typeof profile.email === "string" && profile.email.trim())
-        .filter((profile) => profile.marketing_email_opt_in !== false)
-        .filter((profile) => profile.is_blocked !== true)
-        .map((profile) => ({
-            id: profile.id,
-            email: String(profile.email).trim(),
-            full_name: profile.full_name,
-            updated_at: profile.updated_at as string | null,
-            zodiac_sign: profile.zodiac_sign as string | null,
-            profile_id: profile.id,
-        }));
+    const profileRecipients: CampaignRecipient[] = (profiles ?? [])
+        .map((row) => ({
+            id: String(row.id),
+            email: String(row.email || "").trim().toLowerCase(),
+            full_name: row.full_name ?? null,
+            updated_at: row.updated_at ?? null,
+            zodiac_sign: row.zodiac_sign ?? null,
+            profile_id: String(row.id),
+        }))
+        .filter((row) => row.email);
 
-    if (segment === "manual_list") {
-        const normalized = new Set(manualEmails.map((email) => email.trim().toLowerCase()).filter(Boolean));
-        const known = recipients.filter((recipient) => normalized.has(recipient.email.toLowerCase())).map(sanitizeRecipient);
-        const knownSet = new Set(known.map((item) => item.email.toLowerCase()));
-        const missingEmails = [...normalized].filter((email) => !knownSet.has(email));
+    console.log("[email-campaigns] getBaseRecipients: profiles count", profileRecipients.length);
 
-        if (!missingEmails.length) return known;
+    const profileEmailSet = new Set(profileRecipients.map((row) => row.email));
 
-        const { data: contacts } = await getAdminClient()
-            .from("marketing_contacts")
-            .select("id, email, full_name")
-            .in("email", missingEmails);
+    const { data: contacts, error: contactsError } = await getAdminClient()
+        .from("marketing_contacts")
+        .select("id, email, full_name, updated_at, zodiac_sign, marketing_email_opt_in")
+        .not("email", "is", null)
+        .eq("marketing_email_opt_in", true);
 
-        const fromContacts = (contacts ?? []).map((contact) => ({
-            id: String(contact.id),
-            email: String(contact.email).trim(),
-            full_name: (contact.full_name as string | null) ?? null,
+    if (contactsError) {
+        console.error("[email-campaigns] getBaseRecipients: marketing_contacts error", contactsError);
+        throw new Error(contactsError.message);
+    }
+
+    const contactRecipients: CampaignRecipient[] = (contacts ?? [])
+        .map((row) => ({
+            id: String(row.id),
+            email: String(row.email || "").trim().toLowerCase(),
+            full_name: row.full_name ?? null,
+            updated_at: row.updated_at ?? null,
+            zodiac_sign: row.zodiac_sign ?? null,
             profile_id: null,
-        }));
+        }))
+        .filter((row) => row.email && !profileEmailSet.has(row.email));
 
-        return [...known, ...fromContacts];
+    console.log("[email-campaigns] getBaseRecipients: contacts count", contactRecipients.length);
+
+    const result = [...profileRecipients, ...contactRecipients].map(sanitizeRecipient);
+
+    console.log("[email-campaigns] getBaseRecipients: total count", result.length);
+
+    return result;
+}
+
+async function getRecipients(
+    segmentKey: Exclude<SegmentKey, "admins_test">,
+    manualEmails: string[] = []
+): Promise<CampaignRecipient[]> {
+    console.log("[email-campaigns] getRecipients: start", { segmentKey, manualEmailsCount: manualEmails.length });
+
+    if (segmentKey === "manual_list") {
+        const normalized = uniqueEmails(manualEmails);
+
+        console.log("[email-campaigns] getRecipients: manual_list normalized", normalized);
+
+        if (!normalized.length) return [];
+
+        const { data: profiles, error: profilesError } = await getAdminClient()
+            .from("profiles")
+            .select("id, email, full_name, updated_at")
+            .in("email", normalized);
+
+        if (profilesError) {
+            console.error("[email-campaigns] getRecipients: manual profiles error", profilesError);
+            throw new Error(profilesError.message);
+        }
+
+        const profileRecipients: CampaignRecipient[] = (profiles ?? [])
+            .map((row) => ({
+                id: String(row.id),
+                email: String(row.email || "").trim().toLowerCase(),
+                full_name: row.full_name ?? null,
+                updated_at: row.updated_at ?? null,
+                profile_id: String(row.id),
+            }))
+            .filter((row) => row.email);
+
+        const { data: contacts, error: contactsError } = await getAdminClient()
+            .from("marketing_contacts")
+            .select("id, email, full_name, updated_at")
+            .in("email", normalized);
+
+        if (contactsError) {
+            console.error("[email-campaigns] getRecipients: manual contacts error", contactsError);
+            throw new Error(contactsError.message);
+        }
+
+        const contactRecipients: CampaignRecipient[] = (contacts ?? [])
+            .map((row) => ({
+                id: String(row.id),
+                email: String(row.email || "").trim().toLowerCase(),
+                full_name: row.full_name ?? null,
+                updated_at: row.updated_at ?? null,
+                profile_id: null,
+            }))
+            .filter((row) => row.email);
+
+        const mergedByEmail = new Map<string, CampaignRecipient>();
+
+        for (const recipient of [...profileRecipients, ...contactRecipients]) {
+            if (!mergedByEmail.has(recipient.email)) {
+                mergedByEmail.set(recipient.email, sanitizeRecipient(recipient));
+            }
+        }
+
+        const manualResult = Array.from(mergedByEmail.values());
+
+        console.log("[email-campaigns] getRecipients: manual result count", manualResult.length);
+
+        return manualResult;
     }
 
-    if (segment.startsWith("zodiac_")) {
-        const zodiacKey = segment.replace("zodiac_", "");
-        return recipients.filter((recipient) => recipient.zodiac_sign === zodiacKey).map(sanitizeRecipient);
+    const recipients = await getBaseRecipients();
+
+    if (segmentKey.startsWith("zodiac_")) {
+        const zodiac = segmentKey.replace("zodiac_", "");
+        const filtered = recipients.filter(
+            (recipient) => String(recipient.zodiac_sign || "").toLowerCase() === zodiac
+        );
+        console.log("[email-campaigns] getRecipients: zodiac filtered count", filtered.length);
+        return filtered;
     }
 
-    if (segment === "all") {
-        return recipients.map(sanitizeRecipient);
+    if (segmentKey === "all") {
+        console.log("[email-campaigns] getRecipients: all count", recipients.length);
+        return recipients;
     }
 
-    if (segment === "inactive_30d") {
-        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-        return recipients
-            .filter((recipient) => !recipient.updated_at || new Date(recipient.updated_at).getTime() < cutoff)
-            .map(sanitizeRecipient);
+    if (segmentKey === "inactive_30d") {
+        const threshold = new Date();
+        threshold.setDate(threshold.getDate() - 30);
+
+        const filtered = recipients.filter((recipient) => {
+            if (!recipient.updated_at) return true;
+            return new Date(recipient.updated_at) < threshold;
+        });
+
+        console.log("[email-campaigns] getRecipients: inactive_30d count", filtered.length);
+        return filtered;
     }
 
-    if (segment === "paid" || segment === "no_paid") {
-        const { data: orders, error } = await getAdminClient().from("orders").select("user_id").eq("status", "paid");
-        if (error) throw new Error(error.message);
-        const paidIds = new Set((orders ?? []).map((row) => row.user_id).filter(Boolean));
-        return recipients
-            .filter((recipient) => (segment === "paid" ? paidIds.has(recipient.id) : !paidIds.has(recipient.id)))
-            .map(sanitizeRecipient);
+    if (segmentKey === "paid" || segmentKey === "no_paid") {
+        const { data: orders, error } = await getAdminClient()
+            .from("orders")
+            .select("user_id, status");
+
+        if (error) {
+            console.error("[email-campaigns] getRecipients: orders error", error);
+            throw new Error(error.message);
+        }
+
+        const paidIds = new Set(
+            (orders ?? [])
+                .filter((row) => ["paid", "succeeded", "success"].includes(String(row.status || "").toLowerCase()))
+                .map((row) => row.user_id)
+                .filter(Boolean)
+        );
+
+        const filtered = recipients.filter((recipient) =>
+            segmentKey === "paid" ? paidIds.has(recipient.id) : !paidIds.has(recipient.id)
+        );
+
+        console.log("[email-campaigns] getRecipients: paid/no_paid count", filtered.length);
+
+        return filtered.map(sanitizeRecipient);
     }
 
-    const { data: calculations, error } = await getAdminClient().from("calculations").select("user_id");
-    if (error) throw new Error(error.message);
-    const calcIds = new Set((calculations ?? []).map((row) => row.user_id).filter(Boolean));
+    if (segmentKey === "calculations") {
+        const { data: calculations, error } = await getAdminClient()
+            .from("calculations")
+            .select("user_id");
 
-    return recipients
-        .filter((recipient) => calcIds.has(recipient.id))
-        .map(sanitizeRecipient);
+        if (error) {
+            console.error("[email-campaigns] getRecipients: calculations error", error);
+            throw new Error(error.message);
+        }
+
+        const calcIds = new Set((calculations ?? []).map((row) => row.user_id).filter(Boolean));
+
+        const filtered = recipients.filter((recipient) => calcIds.has(recipient.id));
+
+        console.log("[email-campaigns] getRecipients: calculations count", filtered.length);
+
+        return filtered.map(sanitizeRecipient);
+    }
+
+    console.log("[email-campaigns] getRecipients: fallback count", recipients.length);
+
+    return recipients.map(sanitizeRecipient);
 }
 
 function getSmtpConfig() {
@@ -174,6 +338,14 @@ function getSmtpConfig() {
     const password = getEnv("SMTP_PASS");
     const secure = String(getEnv("SMTP_SECURE") || "false").toLowerCase() === "true";
 
+    console.log("[email-campaigns] SMTP env check", {
+        hasHost: Boolean(host),
+        port,
+        hasUsername: Boolean(username),
+        hasPassword: Boolean(password),
+        secure,
+    });
+
     if (!host || !username || !password) {
         throw new Error("SMTP не настроен. Укажите SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS и SMTP_FROM.");
     }
@@ -181,248 +353,237 @@ function getSmtpConfig() {
     return { host, port, username, password, secure };
 }
 
-function appendTrackingAndUnsubscribe({
-    html,
-    text,
-    recipientId,
-    campaignId,
-    origin,
-}: {
-    html: string;
-    text: string;
-    recipientId: string;
-    campaignId: string;
-    origin: string;
-}) {
-    const openUrl = `${origin}/api/email/open?campaign=${encodeURIComponent(campaignId)}&recipient=${encodeURIComponent(recipientId)}`;
-    const unsubscribeUrl = `${origin}/api/email/unsubscribe?campaign=${encodeURIComponent(campaignId)}&recipient=${encodeURIComponent(recipientId)}`;
+async function ensureManualContacts(adminUserId: string, manualEmails: string[]) {
+    const normalized = uniqueEmails(manualEmails);
+    if (!normalized.length) return;
 
-    const trackedHtml = html
-        ? html.replace(/href=(["'])(https?:\/\/[^"']+)\1/gi, (_match, quote: string, url: string) => {
-              const trackedUrl = `${origin}/api/email/click?campaign=${encodeURIComponent(campaignId)}&recipient=${encodeURIComponent(recipientId)}&url=${encodeURIComponent(url)}`;
-              return `href=${quote}${trackedUrl}${quote}`;
-          })
-        : "";
+    console.log("[email-campaigns] ensureManualContacts: normalized", normalized);
 
-    const unsubscribeBlock = `<div style="margin-top:24px;font-size:12px;color:#6b7280;text-align:center">Если вы не хотите получать такие письма, <a href="${unsubscribeUrl}" style="color:#6b7280;text-decoration:underline">отпишитесь от рассылки</a>.</div>`;
-    const openPixel = `<img src="${openUrl}" width="1" height="1" alt="" style="display:block;border:0;outline:none" />`;
+    const { data: existingProfiles, error: profilesError } = await getAdminClient()
+        .from("profiles")
+        .select("email")
+        .in("email", normalized);
 
-    const finalHtml = trackedHtml
-        ? `${trackedHtml}${unsubscribeBlock}${openPixel}`
-        : "";
-    const finalText = text
-        ? `${text}\n\nОтписаться от рассылки: ${unsubscribeUrl}`
-        : `Отписаться от рассылки: ${unsubscribeUrl}`;
+    if (profilesError) {
+        console.error("[email-campaigns] ensureManualContacts: profiles error", profilesError);
+        throw new Error(profilesError.message);
+    }
 
-    return { html: finalHtml, text: finalText };
+    const existingProfileSet = new Set(
+        (existingProfiles ?? [])
+            .map((row) => String(row.email || "").trim().toLowerCase())
+            .filter(Boolean)
+    );
+
+    const missingForContacts = normalized.filter((email) => !existingProfileSet.has(email));
+
+    console.log("[email-campaigns] ensureManualContacts: missingForContacts", missingForContacts);
+
+    if (!missingForContacts.length) return;
+
+    const { error: upsertError } = await getAdminClient()
+        .from("marketing_contacts")
+        .upsert(
+            missingForContacts.map((email) => ({
+                email,
+                full_name: null,
+                source: "manual_campaign",
+                marketing_email_opt_in: true,
+                created_by: adminUserId,
+            })),
+            { onConflict: "email" }
+        );
+
+    if (upsertError) {
+        console.error("[email-campaigns] ensureManualContacts: upsert error", upsertError);
+        throw new Error(upsertError.message);
+    }
+
+    console.log("[email-campaigns] ensureManualContacts: upsert done");
 }
 
 export async function POST(req: NextRequest) {
-    const admin = await getAdminAuth(req);
-    if (!admin) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    try {
+        console.log("==================================================");
+        console.log("[email-campaigns] POST started");
 
-    const body = await req.json().catch(() => ({}));
-    const segmentKey = String(body.segment_key || "all") as SegmentKey;
-    const isTest = body.test_mode === true;
-    const resolvedSegmentKey: SegmentKey = isTest ? "admins_test" : segmentKey;
-    const subject = String(body.subject || "").trim();
-    const html = String(body.html || "").trim();
-    const text = String(body.text || "").trim();
-    const manualEmails: string[] = Array.isArray(body.manual_emails)
-        ? body.manual_emails.map((item: unknown) => String(item || "").trim().toLowerCase()).filter(Boolean)
-        : [];
+        const admin = await getAdminAuth(req);
 
-    const sendingToAdmins = isTest || segmentKey === "admins_test";
+        console.log("[email-campaigns] admin:", admin);
 
-    if (!sendingToAdmins && !LIVE_SEGMENTS.some((segment) => segment.key === segmentKey)) {
-        return NextResponse.json({ ok: false, error: "Unknown segment" }, { status: 400 });
-    }
-
-    if (!subject) return NextResponse.json({ ok: false, error: "Укажите тему письма." }, { status: 400 });
-    if (!html && !text) return NextResponse.json({ ok: false, error: "Добавьте HTML или текст письма." }, { status: 400 });
-
-    const recipients = sendingToAdmins
-        ? await getAdminRecipients()
-        : await getRecipients(segmentKey as Exclude<SegmentKey, "admins_test">, manualEmails);
-    if (!recipients.length) {
-        return NextResponse.json({ ok: false, error: "В выбранном сегменте нет получателей." }, { status: 400 });
-    }
-
-    const from = getEnv("SMTP_FROM");
-    const replyTo = getEnv("SMTP_REPLY_TO") || from;
-    if (!from) return NextResponse.json({ ok: false, error: "Не задан SMTP_FROM." }, { status: 500 });
-
-    const origin = getEnv("SITE_URL") || getEnv("NEXT_PUBLIC_SITE_URL") || req.nextUrl.origin;
-
-    let campaignId: string | null = null;
-    let auditWarning: string | null = null;
-
-    if (segmentKey === "manual_list" && manualEmails.length) {
-        const normalized = [...new Set<string>(manualEmails.map((email: string) => email.trim().toLowerCase()).filter(Boolean))];
-        const { data: existingProfiles } = await getAdminClient().from("profiles").select("email").in("email", normalized);
-        const existingProfileSet = new Set((existingProfiles ?? []).map((row) => String(row.email || "").toLowerCase()).filter(Boolean));
-        const missingForContacts = normalized.filter((email) => !existingProfileSet.has(email));
-        if (missingForContacts.length) {
-            await getAdminClient()
-                .from("marketing_contacts")
-                .upsert(
-                    missingForContacts.map((email) => ({
-                        email,
-                        full_name: null,
-                        source: "manual_campaign",
-                        marketing_email_opt_in: true,
-                        created_by: admin.userId,
-                    })),
-                    { onConflict: "email" }
-                );
+        if (!admin) {
+            console.log("[email-campaigns] admin not found");
+            return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
         }
-    }
 
-    const campaignInsert = await getAdminClient()
-        .from("email_campaigns")
-        .insert({
-            created_by: admin.userId,
-            segment_key: resolvedSegmentKey,
+        const body = await req.json().catch(() => ({}));
+
+        console.log("[email-campaigns] raw body:", body);
+
+        const segmentKey = String(body.segment_key || "all") as SegmentKey;
+        const isTest = body.test_mode === true;
+        const subject = String(body.subject || "").trim();
+        const html = String(body.html || "").trim();
+        const text = String(body.text || "").trim();
+
+        const manualEmails: string[] = Array.isArray(body.manual_emails)
+            ? uniqueEmails(body.manual_emails.map((item: unknown) => String(item || "")))
+            : [];
+
+        const sendingToAdmins = isTest || segmentKey === "admins_test";
+
+        console.log("[email-campaigns] parsed values:", {
+            segmentKey,
+            isTest,
+            sendingToAdmins,
             subject,
-            html_body: html || null,
-            text_body: text || null,
-            status: isTest ? "sending_test" : "sending",
+            htmlLength: html.length,
+            textLength: text.length,
+            manualEmails,
+            manualEmailsCount: manualEmails.length,
+        });
+
+        if (!sendingToAdmins && !LIVE_SEGMENTS.some((segment) => segment.key === segmentKey)) {
+            console.log("[email-campaigns] unknown segment", segmentKey);
+            return NextResponse.json({ ok: false, error: "Unknown segment" }, { status: 400 });
+        }
+
+        if (!subject) {
+            console.log("[email-campaigns] subject is empty");
+            return NextResponse.json({ ok: false, error: "Укажите тему письма." }, { status: 400 });
+        }
+
+        if (!html && !text) {
+            console.log("[email-campaigns] html and text are empty");
+            return NextResponse.json({ ok: false, error: "Добавьте HTML или текст письма." }, { status: 400 });
+        }
+
+        if (segmentKey === "manual_list" && !sendingToAdmins) {
+            if (!manualEmails.length) {
+                console.log("[email-campaigns] manual_list but no emails");
+                return NextResponse.json({ ok: false, error: "Добавьте хотя бы один email." }, { status: 400 });
+            }
+
+            await ensureManualContacts(admin.userId, manualEmails);
+        }
+
+        const recipients = sendingToAdmins
+            ? await getAdminRecipients()
+            : await getRecipients(segmentKey as Exclude<SegmentKey, "admins_test">, manualEmails);
+
+        console.log(
+            "[email-campaigns] recipients list:",
+            recipients.map((r) => ({
+                id: r.id,
+                email: r.email,
+                full_name: r.full_name,
+            }))
+        );
+
+        if (!recipients.length) {
+            console.log("[email-campaigns] recipients empty");
+            return NextResponse.json({ ok: false, error: "В выбранном сегменте нет получателей." }, { status: 400 });
+        }
+
+        const from = getEnv("SMTP_FROM");
+        const replyTo = getEnv("SMTP_REPLY_TO") || from;
+        const origin = getEnv("SITE_URL") || getEnv("NEXT_PUBLIC_SITE_URL") || req.nextUrl.origin;
+
+        console.log("[email-campaigns] env values:", {
+            from,
+            replyTo,
+            origin,
+            smtpHost: process.env.SMTP_HOST,
+            smtpPort: process.env.SMTP_PORT,
+            smtpUser: process.env.SMTP_USER,
+            smtpSecure: process.env.SMTP_SECURE,
+        });
+
+        if (!from) {
+            console.log("[email-campaigns] SMTP_FROM not set");
+            return NextResponse.json({ ok: false, error: "Не задан SMTP_FROM." }, { status: 500 });
+        }
+
+        const smtp = getSmtpConfig();
+
+        let sent = 0;
+        let failed = 0;
+        const errors: Array<{ email: string; error: string }> = [];
+
+        for (const recipient of recipients) {
+            try {
+                console.log("[email-campaigns] sending to:", recipient.email);
+
+                await sendSmtpMail({
+                    host: smtp.host,
+                    port: smtp.port,
+                    secure: smtp.secure,
+                    username: smtp.username,
+                    password: smtp.password,
+                    from,
+                    to: recipient.email,
+                    subject,
+                    text: text || undefined,
+                    html: html || undefined,
+                    replyTo: replyTo || undefined,
+                });
+
+                sent += 1;
+
+                console.log("[email-campaigns] sent ok:", recipient.email);
+            } catch (error) {
+                failed += 1;
+
+                const errorMessage = error instanceof Error ? error.message : String(error);
+
+                errors.push({
+                    email: recipient.email,
+                    error: errorMessage,
+                });
+
+                console.error("[email-campaigns] send failed:", {
+                    email: recipient.email,
+                    error: errorMessage,
+                });
+            }
+        }
+
+        const status =
+            failed > 0
+                ? sent > 0
+                    ? "partial"
+                    : "failed"
+                : "sent";
+
+        console.log("[email-campaigns] finished:", {
+            status,
+            sent,
+            failed,
+            recipientsCount: recipients.length,
+            errors,
+        });
+
+        return NextResponse.json({
+            ok: true,
+            status,
+            sent_count: sent,
+            failed_count: failed,
             recipients_count: recipients.length,
-        })
-        .select("id")
-        .single();
+            reply_to: replyTo,
+            test_mode: isTest,
+            errors,
+            message:
+                status === "sent"
+                    ? "Отправлено"
+                    : status === "partial"
+                        ? "Частично отправлено"
+                        : "Ошибка отправки",
+        });
+    } catch (error) {
+        console.error("[email-campaigns][POST] fatal error:", error);
 
-    if (campaignInsert.error) {
-        const message = campaignInsert.error.message || "Не удалось сохранить кампанию.";
-        if (!message.toLowerCase().includes("stack depth limit exceeded")) {
-            return NextResponse.json({ ok: false, error: message }, { status: 500 });
-        }
-        auditWarning = "Логи рассылки не сохранились: вероятна рекурсия в БД (stack depth limit exceeded) для email_campaigns.";
-    } else {
-        campaignId = campaignInsert.data.id as string;
+        const message = error instanceof Error ? error.message : "Неизвестная ошибка отправки.";
+
+        return NextResponse.json({ ok: false, error: message }, { status: 500 });
     }
-    const smtp = getSmtpConfig();
-
-    let sent = 0;
-    let failed = 0;
-    const recipientLogs: Array<Record<string, string | null>> = [];
-    const deliveryEvents: Array<Record<string, string | null>> = [];
-
-    for (const recipient of recipients) {
-        let recipientRowId: string | null = null;
-        if (campaignId) {
-            const preInsert = await getAdminClient()
-                .from("email_campaign_recipients")
-                .insert({
-                    campaign_id: campaignId,
-                    profile_id: recipient.profile_id ?? null,
-                    email: recipient.email,
-                    status: "pending",
-                    error_message: null,
-                })
-                .select("id")
-                .single();
-            if (!preInsert.error) {
-                recipientRowId = String(preInsert.data.id);
-            }
-        }
-
-        const message = campaignId && recipientRowId
-            ? appendTrackingAndUnsubscribe({
-                  html,
-                  text,
-                  campaignId,
-                  recipientId: recipientRowId,
-                  origin,
-              })
-            : { html, text };
-
-        try {
-            await sendSmtpMail({
-                ...smtp,
-                from,
-                to: recipient.email,
-                subject,
-                text: message.text || undefined,
-                html: message.html || undefined,
-                replyTo: replyTo || undefined,
-            });
-            sent += 1;
-            if (campaignId && recipientRowId) {
-                await getAdminClient()
-                    .from("email_campaign_recipients")
-                    .update({ status: "sent", error_message: null })
-                    .eq("id", recipientRowId);
-                deliveryEvents.push({
-                    recipient_id: recipientRowId,
-                    campaign_id: campaignId,
-                    profile_id: recipient.profile_id ?? null,
-                    email: recipient.email,
-                    event_type: "delivered",
-                    event_status: "ok",
-                });
-            } else {
-                recipientLogs.push({ campaign_id: campaignId, profile_id: recipient.profile_id ?? null, email: recipient.email, status: "sent", error_message: null });
-            }
-        } catch (error) {
-            failed += 1;
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            if (campaignId && recipientRowId) {
-                await getAdminClient()
-                    .from("email_campaign_recipients")
-                    .update({ status: "failed", error_message: errorMessage })
-                    .eq("id", recipientRowId);
-                deliveryEvents.push({
-                    recipient_id: recipientRowId,
-                    campaign_id: campaignId,
-                    profile_id: recipient.profile_id ?? null,
-                    email: recipient.email,
-                    event_type: "failed",
-                    event_status: "error",
-                });
-            } else {
-                recipientLogs.push({
-                    campaign_id: campaignId,
-                    profile_id: recipient.profile_id ?? null,
-                    email: recipient.email,
-                    status: "failed",
-                    error_message: errorMessage,
-                });
-            }
-        }
-    }
-
-    if (campaignId && recipientLogs.length) {
-        const recipientsInsert = await getAdminClient().from("email_campaign_recipients").insert(recipientLogs);
-        if (recipientsInsert.error && recipientsInsert.error.message.toLowerCase().includes("stack depth limit exceeded")) {
-            auditWarning = auditWarning || "Логи получателей не сохранились: вероятна рекурсия в БД (stack depth limit exceeded).";
-        }
-    }
-    if (deliveryEvents.length) {
-        await getAdminClient().from("email_delivery_events").insert(deliveryEvents);
-    }
-
-    const status = failed > 0 ? (sent > 0 ? (isTest ? "partial_test" : "partial") : (isTest ? "failed_test" : "failed")) : (isTest ? "sent_test" : "sent");
-
-    if (campaignId) {
-        const campaignUpdate = await getAdminClient()
-            .from("email_campaigns")
-            .update({ status, sent_count: sent, failed_count: failed, sent_at: new Date().toISOString() })
-            .eq("id", campaignId);
-        if (campaignUpdate.error && campaignUpdate.error.message.toLowerCase().includes("stack depth limit exceeded")) {
-            auditWarning = auditWarning || "Статус кампании не обновился: вероятна рекурсия в БД (stack depth limit exceeded).";
-        }
-    }
-
-    return NextResponse.json({
-        ok: true,
-        campaign_id: campaignId,
-        status,
-        sent_count: sent,
-        failed_count: failed,
-        recipients_count: recipients.length,
-        reply_to: replyTo,
-        test_mode: isTest,
-        warning: auditWarning,
-    });
 }

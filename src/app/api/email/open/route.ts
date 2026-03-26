@@ -3,45 +3,74 @@ import { getAdminClient } from "@/lib/admin/auth";
 
 export const runtime = "nodejs";
 
-const PIXEL_BYTES = Buffer.from("R0lGODlhAQABAPAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==", "base64");
+const PIXEL_BASE64 =
+    "R0lGODlhAQABAPAAAAAAAAAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==";
 
 export async function GET(req: NextRequest) {
     const campaignId = req.nextUrl.searchParams.get("campaign");
     const recipientId = req.nextUrl.searchParams.get("recipient");
 
     if (!campaignId || !recipientId) {
-        return new NextResponse(PIXEL_BYTES, { headers: { "Content-Type": "image/gif", "Cache-Control": "no-store, max-age=0" } });
-    }
-
-    const nowIso = new Date().toISOString();
-    const { data: recipient } = await getAdminClient()
-        .from("email_campaign_recipients")
-        .select("id, campaign_id, profile_id, email, opened_at")
-        .eq("id", recipientId)
-        .eq("campaign_id", campaignId)
-        .single();
-
-    if (recipient) {
-        if (!recipient.opened_at) {
-            await getAdminClient().from("email_campaign_recipients").update({ opened_at: nowIso }).eq("id", recipientId);
-            const { data: campaign } = await getAdminClient().from("email_campaigns").select("opened_count").eq("id", campaignId).single();
-            await getAdminClient().from("email_campaigns").update({ opened_count: (campaign?.opened_count ?? 0) + 1 }).eq("id", campaignId);
-        }
-
-        await getAdminClient().from("email_delivery_events").insert({
-            recipient_id: recipientId,
-            campaign_id: campaignId,
-            profile_id: recipient.profile_id,
-            email: recipient.email,
-            event_type: "opened",
-            event_status: "ok",
+        return new NextResponse(Buffer.from(PIXEL_BASE64, "base64"), {
+            status: 200,
+            headers: {
+                "Content-Type": "image/gif",
+                "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+                Pragma: "no-cache",
+                Expires: "0",
+            },
         });
     }
 
-    return new NextResponse(PIXEL_BYTES, {
+    const admin = getAdminClient();
+
+    const { data: recipient } = await admin
+        .from("email_campaign_recipients")
+        .select("id, campaign_id, opens_count, opened_at")
+        .eq("id", recipientId)
+        .eq("campaign_id", campaignId)
+        .maybeSingle();
+
+    if (recipient) {
+        const nextOpens = Number(recipient.opens_count || 0) + 1;
+        const firstOpenAt = recipient.opened_at || new Date().toISOString();
+
+        await admin
+            .from("email_campaign_recipients")
+            .update({
+                opens_count: nextOpens,
+                opened_at: firstOpenAt,
+            })
+            .eq("id", recipientId);
+
+        await admin.from("email_delivery_events").insert({
+            recipient_id: recipientId,
+            campaign_id: campaignId,
+            event_type: "opened",
+            event_status: "success",
+        });
+
+        const { count } = await admin
+            .from("email_campaign_recipients")
+            .select("*", { count: "exact", head: true })
+            .eq("campaign_id", campaignId)
+            .not("opened_at", "is", null);
+
+        await admin
+            .from("email_campaigns")
+            .update({
+                opened_count: count || 0,
+            })
+            .eq("id", campaignId);
+    }
+
+    return new NextResponse(Buffer.from(PIXEL_BASE64, "base64"), {
+        status: 200,
         headers: {
             "Content-Type": "image/gif",
-            "Cache-Control": "no-store, max-age=0",
+            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+            Pragma: "no-cache",
+            Expires: "0",
         },
     });
 }
