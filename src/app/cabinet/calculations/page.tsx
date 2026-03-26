@@ -1210,12 +1210,7 @@ export default function CalculationsPage() {
             return;
         }
 
-        if (kind === "big_calendar") {
-            void runBigCalendar();
-            return;
-        }
-
-        void openPurchasedResult(kind);
+        window.location.href = "/cabinet/purchases";
     }
 
     const showNatalResultBlock =
@@ -1352,7 +1347,7 @@ export default function CalculationsPage() {
                                                     ? "Открыть результат"
                                                     : "Выполнить расчёт"
                                                 : purchased
-                                                    ? "Открыть результат"
+                                                    ? "В покупках"
                                                     : `Купить за ${product.price_rub} ₽`}
                                     </button>
                                 </div>
@@ -1473,36 +1468,20 @@ export default function CalculationsPage() {
                                         >
                                             Купить за {product.price_rub} ₽
                                         </button>
-                                    ) : hasSaved ? (
-                                        <div
+                                    ) : purchased ? (
+                                        <button
+                                            onClick={() => {
+                                                window.location.href = "/cabinet/purchases";
+                                            }}
                                             style={{
-                                                display: "grid",
-                                                gap: 10,
-                                                width: "100%",
+                                                ...btn(),
+                                                minWidth: 240,
+                                                alignSelf: "center",
                                                 marginTop: "auto",
-                                                gridTemplateColumns: "1fr",
                                             }}
                                         >
-                                            <button
-                                                onClick={() => void openSavedBigCalendarPdf()}
-                                                style={{
-                                                    ...btn(),
-                                                    width: "100%",
-                                                }}
-                                            >
-                                                Открыть PDF
-                                            </button>
-
-                                            <button
-                                                onClick={() => void downloadSavedBigCalendarPdf()}
-                                                style={{
-                                                    ...btn(),
-                                                    width: "100%",
-                                                }}
-                                            >
-                                                Скачать PDF
-                                            </button>
-                                        </div>
+                                            В покупках
+                                        </button>
                                     ) : (
                                         <button
                                             disabled={!canRun || profileLoading || loading}
