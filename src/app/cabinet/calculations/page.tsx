@@ -59,6 +59,7 @@ export default function CalculationsPage() {
     const searchParams = useSearchParams();
     const API =
         process.env.NEXT_PUBLIC_ASTRO_API_BASE?.trim() || "http://127.0.0.1:8011";
+    const URANUS_GEMINI_BANNER_PATH = "/banners/uranus-gemini-pdf-banner.jpg";
 
     const [profileLoading, setProfileLoading] = useState(true);
     const [profileError, setProfileError] = useState<string | null>(null);
@@ -154,7 +155,12 @@ export default function CalculationsPage() {
     }
 
     async function fetchBigCalendarPdfBlob(pdfPayload: Record<string, unknown>) {
-        const res = await fetch("/api/astro/big-calendar/pdf", {
+        const renderEndpoint =
+            typeof pdfPayload.render_endpoint === "string" &&
+            pdfPayload.render_endpoint.trim()
+                ? pdfPayload.render_endpoint.trim()
+                : "/api/astro/big-calendar/pdf";
+        const res = await fetch(renderEndpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(pdfPayload),
@@ -1136,6 +1142,22 @@ export default function CalculationsPage() {
                 typeof payloadData === "string"
                     ? payloadData
                     : payloadData?.text ?? "";
+            const uranusRaw =
+                payloadData && typeof payloadData === "object"
+                    ? (payloadData as Record<string, unknown>)
+                    : {};
+            const uranusPdfPayload = {
+                template: "uranus_gemini",
+                title: "Уран в Близнецах",
+                content: text,
+                general_p2: text,
+                name: "Клиент",
+                birth_date: profile?.birth_date ?? targetDate,
+                birth_time: profile?.birth_time ?? "12:00",
+                banner_url: URANUS_GEMINI_BANNER_PATH,
+                file_name: `Уран_в_Близнецах_${profile?.birth_date ?? targetDate}.pdf`,
+                render_endpoint: "/api/astro/big-calendar/pdf",
+            };
 
             if (!text) {
                 throw new Error("n8n не вернул текст расчёта");
@@ -1144,7 +1166,10 @@ export default function CalculationsPage() {
             setResult({
                 kind: "uranus_gemini",
                 text,
-                raw: payloadData,
+                raw: {
+                    ...uranusRaw,
+                    pdf_payload: uranusPdfPayload,
+                },
             });
 
             setInterpretation({
@@ -1159,6 +1184,27 @@ export default function CalculationsPage() {
                 updatedAt: new Date().toISOString(),
                 expiresAt: null,
             });
+
+            const savedRow = await saveCalculation({
+                kind: "uranus_gemini",
+                resultText: text,
+                resultJson: {
+                    ...uranusRaw,
+                    pdf_payload: uranusPdfPayload,
+                },
+                inputParams: {
+                    birth_date: profile?.birth_date ?? null,
+                    birth_time: profile?.birth_time ?? null,
+                    birth_city: profile?.birth_city ?? null,
+                },
+            });
+
+            if (savedRow) {
+                setSavedMap((prev) => ({
+                    ...prev,
+                    uranus_gemini: savedRow,
+                }));
+            }
         } catch (e: any) {
             setErr(e?.message || "Ошибка расчёта через n8n");
         } finally {
