@@ -1108,8 +1108,6 @@ export default function CalculationsPage() {
                     hour: Number.parseInt(timeParts?.hour ?? "12", 10),
                     minute: Number.parseInt(timeParts?.minute ?? "0", 10),
                     city_name: profile?.birth_city ?? "",
-                    orb: 1.0,
-                    step_hours: 12,
                 }),
             });
 
@@ -1131,9 +1129,13 @@ export default function CalculationsPage() {
                     ? payloadData
                     : typeof payloadData === "object" &&
                         payloadData &&
-                        "text" in payloadData &&
-                        typeof (payloadData as Record<string, unknown>).text === "string"
-                        ? String((payloadData as Record<string, unknown>).text ?? "")
+                        typeof payloadData === "object"
+                        ? String(
+                            (payloadData as Record<string, unknown>).text ??
+                            (payloadData as Record<string, unknown>).result_text ??
+                            (payloadData as Record<string, unknown>).interpretation_text ??
+                            ""
+                        ).trim()
                         : JSON.stringify(payloadData, null, 2);
             const uranusRaw =
                 payloadData && typeof payloadData === "object"
