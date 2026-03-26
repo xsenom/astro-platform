@@ -339,7 +339,7 @@ export default function CalculationsPage() {
         if (!isPurchased("uranus_gemini")) return;
 
         autoLaunchCalcRef.current = calcCode;
-        void runN8nCalculation("uranus_gemini");
+        void runUranusGeminiCalculation();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchParams, profileLoading, loading, accessMap.uranus_gemini]);
 
@@ -985,9 +985,7 @@ export default function CalculationsPage() {
         }
     }
 
-    async function runN8nCalculation(
-        kind: "day" | "week" | "month" | "uranus_gemini"
-    ) {
+    async function runTransitCalculation(kind: "day" | "week" | "month") {
         if (!requireProfile()) return;
 
         setLoading(true);
@@ -995,12 +993,114 @@ export default function CalculationsPage() {
         resetResultState();
 
         try {
+            const commonQuery = new URLSearchParams({
+                year: String(dateParts!.year),
+                month: String(dateParts!.month),
+                day: String(dateParts!.day),
+                hour: timeParts!.hour,
+                minute: timeParts!.minute,
+                city_name: profile!.birth_city!.trim(),
+            });
+
+            let endpoint = "";
+            if (kind === "day") {
+                commonQuery.set("target_date", targetDate);
+                endpoint = "/transits_day";
+            } else if (kind === "week") {
+                endpoint = "/transits_week_theme";
+            } else {
+                endpoint = "/transits_month";
+            }
+
+            const json = await callJson(`${API}${endpoint}?${commonQuery.toString()}`);
+
+            let text = "Пустой ответ";
+            if (kind === "day") {
+                const item = Array.isArray(json) ? json[0] : json;
+                const lines: string[] = [];
+                if (item?.day_summary) lines.push(item.day_summary);
+                if (Array.isArray(item?.aspects_text)) lines.push("", ...item.aspects_text);
+                text = lines.join("\n").trim() || "Пустой ответ";
+            } else if (kind === "week") {
+                const arr = json?.weekly_theme_forecast || [];
+                text = Array.isArray(arr)
+                    ? arr.map((x: { summary_text?: string }) => x.summary_text || "")
+                        .filter(Boolean)
+                        .join("\n\n")
+                    : JSON.stringify(json, null, 2);
+            } else {
+                const arr = json?.month_transits || [];
+                text = Array.isArray(arr) && arr.length
+                    ? arr
+                        .slice(0, 200)
+                        .map((x: { date?: string; description?: string }) =>
+                            `${x.date || "дата не указана"} — ${x.description || ""}`
+                        )
+                        .join("\n")
+                    : "Нет точных благоприятных аспектов в ближайшие 30 дней.";
+            }
+
+            setResult({
+                kind,
+                text: text || "Пустой ответ",
+                raw: json,
+            });
+            setResultMeta({
+                source: "fresh",
+                updatedAt: new Date().toISOString(),
+                expiresAt: null,
+            });
+
+            const savedRow = await saveCalculation({
+                kind,
+                resultText: text || "Пустой ответ",
+                resultJson: json,
+                targetDate: kind === "day" ? targetDate : null,
+                inputParams: {
+                    birth_date: profile?.birth_date,
+                    birth_time: profile?.birth_time,
+                    birth_city: profile?.birth_city,
+                    target_date: kind === "day" ? targetDate : null,
+                },
+            });
+
+            if (savedRow) {
+                setSavedMap((prev) => ({
+                    ...prev,
+                    [kind]: savedRow,
+                }));
+            }
+
+            const key = buildInterpretationKey(kind, {
+                updated_at: new Date().toISOString(),
+                target_date: targetDate,
+                result_text: text,
+            });
+
+            interpretationRequestRef.current = key;
+            void loadInterpretation(kind, text, json, {
+                targetDate,
+            });
+        } catch (e: any) {
+            setErr(e?.message || "Ошибка расчёта");
+        } finally {
+            setLoading(false);
+            setActiveKind(null);
+        }
+    }
+
+    async function runUranusGeminiCalculation() {
+        if (!requireProfile()) return;
+
+        setLoading(true);
+        setActiveKind("uranus_gemini");
+        resetResultState();
+
+        try {
             const payload = {
-                calc_kind: kind,
+                calc_kind: "uranus_gemini",
                 question:
-                    kind === "uranus_gemini"
-                        ? "Сделай персональный расчёт «Уран в Близнецах» с практическими рекомендациями на ближайший период."
-                        : `Сделай персональный астрологический расчёт типа ${kind}.`,
+                    "Сделай персональный расчёт «Уран в Близнецах» с практическими рекомендациями на ближайший период.",
                 profile: {
                     birth_date: profile?.birth_date ?? null,
                     birth_time: profile?.birth_time ?? null,
@@ -1029,7 +1129,7 @@ export default function CalculationsPage() {
                     : JSON.stringify(json.data, null, 2);
 
             setResult({
-                kind,
+                kind: "uranus_gemini",
                 text: text || "Пустой ответ",
                 raw: json.data,
             });
@@ -1037,17 +1137,6 @@ export default function CalculationsPage() {
                 source: "fresh",
                 updatedAt: new Date().toISOString(),
                 expiresAt: null,
-            });
-
-            const key = buildInterpretationKey(kind, {
-                updated_at: new Date().toISOString(),
-                target_date: targetDate,
-                result_text: text,
-            });
-
-            interpretationRequestRef.current = key;
-            void loadInterpretation(kind, text, json.data, {
-                targetDate,
             });
         } catch (e: any) {
             setErr(e?.message || "Ошибка расчёта через n8n");
@@ -1326,7 +1415,12 @@ export default function CalculationsPage() {
             return;
         }
 
-        void runN8nCalculation(kind);
+        if (kind === "uranus_gemini") {
+            void runUranusGeminiCalculation();
+            return;
+        }
+
+        void runTransitCalculation(kind);
     }
 
     const showNatalResultBlock =
