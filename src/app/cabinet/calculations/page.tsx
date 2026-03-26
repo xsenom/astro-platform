@@ -9,11 +9,6 @@ import {
     NatalResultView,
 } from "@/components/cabinet/calculations/display";
 import {
-    bigCalendarCardStyle,
-    bigCalendarDescriptionStyle,
-    bigCalendarTagsRowStyle,
-    bigCalendarTitleStyle,
-    bigCalendarTopRowStyle,
     btn,
     cardDescriptionStyle,
     cardTagsRowStyle,
@@ -48,7 +43,7 @@ import { supabase } from "@/lib/supabase/client";
 const URANUS_GEMINI_PRODUCT: ProductRow = {
     code: "uranus_gemini",
     title: "Уран в Близнецах",
-    description: "Персональный расчёт периода Урана в Близнецах через n8n.",
+    description: "Персональный расчёт периода Урана в Близнецах через backend.",
     price_rub: 3900,
     is_free: false,
     is_active: true,
@@ -59,6 +54,7 @@ export default function CalculationsPage() {
     const searchParams = useSearchParams();
     const API =
         process.env.NEXT_PUBLIC_ASTRO_API_BASE?.trim() || "http://127.0.0.1:8011";
+    const URANUS_GEMINI_BANNER_PATH = "/banners/uranus-gemini-pdf-banner.jpg";
 
     const [profileLoading, setProfileLoading] = useState(true);
     const [profileError, setProfileError] = useState<string | null>(null);
@@ -154,7 +150,12 @@ export default function CalculationsPage() {
     }
 
     async function fetchBigCalendarPdfBlob(pdfPayload: Record<string, unknown>) {
-        const res = await fetch("/api/astro/big-calendar/pdf", {
+        const renderEndpoint =
+            typeof pdfPayload.render_endpoint === "string" &&
+            pdfPayload.render_endpoint.trim()
+                ? pdfPayload.render_endpoint.trim()
+                : "/api/astro/big-calendar/pdf";
+        const res = await fetch(renderEndpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(pdfPayload),
@@ -1097,33 +1098,26 @@ export default function CalculationsPage() {
         resetResultState();
 
         try {
-            const payload = {
-                calc_kind: "uranus_gemini",
-                question:
-                    "Сделай персональный расчёт «Уран в Близнецах» с практическими рекомендациями на ближайший период.",
-                profile: {
-                    birth_date: profile?.birth_date ?? null,
-                    birth_time: profile?.birth_time ?? null,
-                    birth_city: profile?.birth_city ?? null,
-                },
-                target_date: targetDate,
-            };
-
-            const res = await fetch("/api/n8n/calc", {
+            const res = await fetch("/api/astro/uranus-gemini", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
+                body: JSON.stringify({
+                    year: dateParts?.year,
+                    month: dateParts?.month,
+                    day: dateParts?.day,
+                    hour: Number.parseInt(timeParts?.hour ?? "12", 10),
+                    minute: Number.parseInt(timeParts?.minute ?? "0", 10),
+                    city_name: profile?.birth_city ?? "",
+                    orb: 1.0,
+                    step_hours: 12,
+                }),
             });
 
             const json = (await res.json().catch(() => null)) as
                 | {
                 ok?: boolean;
                 error?: string;
-                data?: {
-                    ok?: boolean;
-                    text?: string;
-                    raw?: unknown;
-                } | string;
+                data?: unknown;
             }
                 | null;
 
@@ -1135,23 +1129,47 @@ export default function CalculationsPage() {
             const text =
                 typeof payloadData === "string"
                     ? payloadData
-                    : payloadData?.text ?? "";
+                    : typeof payloadData === "object" &&
+                        payloadData &&
+                        "text" in payloadData &&
+                        typeof (payloadData as Record<string, unknown>).text === "string"
+                        ? String((payloadData as Record<string, unknown>).text ?? "")
+                        : JSON.stringify(payloadData, null, 2);
+            const uranusRaw =
+                payloadData && typeof payloadData === "object"
+                    ? (payloadData as Record<string, unknown>)
+                    : {};
+            const uranusPdfPayload = {
+                template: "uranus_gemini",
+                title: "Уран в Близнецах",
+                content: text,
+                general_p2: text,
+                name: "Клиент",
+                birth_date: profile?.birth_date ?? targetDate,
+                birth_time: profile?.birth_time ?? "12:00",
+                banner_url: URANUS_GEMINI_BANNER_PATH,
+                file_name: `Уран_в_Близнецах_${profile?.birth_date ?? targetDate}.pdf`,
+                render_endpoint: "/api/astro/big-calendar/pdf",
+            };
 
             if (!text) {
-                throw new Error("n8n не вернул текст расчёта");
+                throw new Error("Backend не вернул текст расчёта");
             }
 
             setResult({
                 kind: "uranus_gemini",
                 text,
-                raw: payloadData,
+                raw: {
+                    ...uranusRaw,
+                    pdf_payload: uranusPdfPayload,
+                },
             });
 
             setInterpretation({
                 loading: false,
                 text,
                 error: null,
-                model: "n8n",
+                model: "backend",
             });
 
             setResultMeta({
@@ -1159,8 +1177,29 @@ export default function CalculationsPage() {
                 updatedAt: new Date().toISOString(),
                 expiresAt: null,
             });
+
+            const savedRow = await saveCalculation({
+                kind: "uranus_gemini",
+                resultText: text,
+                resultJson: {
+                    ...uranusRaw,
+                    pdf_payload: uranusPdfPayload,
+                },
+                inputParams: {
+                    birth_date: profile?.birth_date ?? null,
+                    birth_time: profile?.birth_time ?? null,
+                    birth_city: profile?.birth_city ?? null,
+                },
+            });
+
+            if (savedRow) {
+                setSavedMap((prev) => ({
+                    ...prev,
+                    uranus_gemini: savedRow,
+                }));
+            }
         } catch (e: any) {
-            setErr(e?.message || "Ошибка расчёта через n8n");
+            setErr(e?.message || "Ошибка расчёта Урана в Близнецах");
         } finally {
             setLoading(false);
             setActiveKind(null);
@@ -1447,8 +1486,7 @@ export default function CalculationsPage() {
     const showNatalResultBlock =
         (loading && activeKind === "natal") || result?.kind === "natal";
 
-    const regularProducts = products.filter((p) => p.code !== "big_calendar");
-    const bigCalendarProduct = products.find((p) => p.code === "big_calendar") ?? null;
+    const regularProducts = products;
 
     const resultPdfUrl =
         result && "raw" in result ? result.raw?.pdf_url ?? null : null;
@@ -1584,150 +1622,6 @@ export default function CalculationsPage() {
                                 </div>
                             );
                         })}
-                    </div>
-                )}
-
-                {bigCalendarProduct && (
-                    <div
-                        style={{
-                            marginTop: 12,
-                            display: "flex",
-                            justifyContent: "center",
-                        }}
-                    >
-                        {(() => {
-                            const product = bigCalendarProduct;
-                            const purchased = isPurchased(product.code);
-                            const hasSaved = !!savedMap[product.code];
-
-                            return (
-                                <div
-                                    style={{
-                                        ...bigCalendarCardStyle,
-                                        width: "100%",
-                                        maxWidth: 680,
-                                    }}
-                                >
-                                    <div style={bigCalendarTopRowStyle}>
-                                        <div style={bigCalendarTitleStyle}>
-                                            {product.title}
-                                        </div>
-
-                                        <div
-                                            style={topBadgeStyle(
-                                                product.is_free
-                                                    ? "free"
-                                                    : purchased
-                                                        ? "bought"
-                                                        : "price"
-                                            )}
-                                        >
-                                            {product.is_free
-                                                ? "Бесплатно"
-                                                : purchased
-                                                    ? "Куплено"
-                                                    : `${product.price_rub} ₽`}
-                                        </div>
-                                    </div>
-
-                                    <div style={bigCalendarDescriptionStyle}>
-                                        {product.description ||
-                                            "Описание скоро будет добавлено"}
-                                    </div>
-
-                                    <div style={bigCalendarTagsRowStyle}>
-                                        {hasSaved && (
-                                            <div style={tagStyle("rgba(90,220,150,.12)")}>
-                                                Сохранено
-                                            </div>
-                                        )}
-                                        {!product.is_free && purchased && (
-                                            <div style={tagStyle("rgba(110,170,255,.14)")}>
-                                                Доступ открыт
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {loading && activeKind === product.code ? (
-                                        <div
-                                            style={{
-                                                marginTop: "auto",
-                                                width: "100%",
-                                                borderRadius: 18,
-                                                padding: "16px 14px",
-                                                border: "1px solid rgba(224,197,143,.18)",
-                                                background: "rgba(224,197,143,.08)",
-                                                display: "grid",
-                                                gap: 8,
-                                                textAlign: "center",
-                                                alignSelf: "stretch",
-                                            }}
-                                        >
-                                            <div
-                                                style={{
-                                                    fontWeight: 900,
-                                                    fontSize: 20,
-                                                    color: "rgba(245,240,233,.96)",
-                                                    lineHeight: 1.2,
-                                                }}
-                                            >
-                                                {bigCalendarStatus || "Формируем календарь…"}
-                                                <AnimatedDots />
-                                            </div>
-
-                                            <div
-                                                style={{
-                                                    fontSize: 13,
-                                                    lineHeight: 1.45,
-                                                    color: "rgba(245,240,233,.72)",
-                                                }}
-                                            >
-                                                Подготавливаем персональный календарь,
-                                                интерпретацию и PDF.
-                                            </div>
-                                        </div>
-                                    ) : !purchased ? (
-                                        <button
-                                            disabled={!canRun || profileLoading || loading}
-                                            onClick={() => void openPayment("big_calendar")}
-                                            style={{
-                                                ...btn(),
-                                                minWidth: 240,
-                                                alignSelf: "center",
-                                                marginTop: "auto",
-                                            }}
-                                        >
-                                            Купить за {product.price_rub} ₽
-                                        </button>
-                                    ) : purchased ? (
-                                        <button
-                                            onClick={() => void runBigCalendar(true)}
-                                            style={{
-                                                ...btn(),
-                                                minWidth: 240,
-                                                alignSelf: "center",
-                                                marginTop: "auto",
-                                            }}
-                                        >
-                                            Сделать расчёт
-                                        </button>
-                                    ) : (
-                                        <button
-                                            disabled={!canRun || profileLoading || loading}
-                                            onClick={() => void runBigCalendar(true)}
-                                            style={{
-                                                ...btn(),
-                                                minWidth: 240,
-                                                alignSelf: "center",
-                                                marginTop: "auto",
-                                            }}
-                                        >
-                                            Выполнить расчёт
-                                        </button>
-                                    )}
-                                </div>
-                            );
-                        })()}
                     </div>
                 )}
 
