@@ -118,6 +118,59 @@ export default function CalculationsPage() {
         [profile?.birth_time]
     );
 
+    function extractUranusText(payloadData: unknown): string {
+        if (typeof payloadData === "string") {
+            return payloadData.trim();
+        }
+
+        if (!payloadData || typeof payloadData !== "object") {
+            return "";
+        }
+
+        const candidate = payloadData as Record<string, unknown>;
+        const directText = [
+            candidate.text,
+            candidate.result_text,
+            candidate.interpretation_text,
+            candidate.content,
+            candidate.markdown,
+        ].find((value) => typeof value === "string" && value.trim());
+
+        if (typeof directText === "string" && directText.trim()) {
+            return directText.trim();
+        }
+
+        const chunks: string[] = [];
+        const seen = new Set<string>();
+
+        const walk = (value: unknown) => {
+            if (typeof value === "string") {
+                const cleaned = value.trim();
+                if (!cleaned || seen.has(cleaned)) return;
+                seen.add(cleaned);
+                chunks.push(cleaned);
+                return;
+            }
+
+            if (Array.isArray(value)) {
+                value.forEach(walk);
+                return;
+            }
+
+            if (value && typeof value === "object") {
+                Object.values(value as Record<string, unknown>).forEach(walk);
+            }
+        };
+
+        walk(payloadData);
+
+        if (chunks.length > 0) {
+            return chunks.join("\n\n");
+        }
+
+        return JSON.stringify(payloadData, null, 2);
+    }
+
     function resetResultState() {
         setErr(null);
         setResult(null);
@@ -1124,19 +1177,7 @@ export default function CalculationsPage() {
             }
 
             const payloadData = json.data;
-            const text =
-                typeof payloadData === "string"
-                    ? payloadData
-                    : typeof payloadData === "object" &&
-                        payloadData &&
-                        typeof payloadData === "object"
-                        ? String(
-                            (payloadData as Record<string, unknown>).text ??
-                            (payloadData as Record<string, unknown>).result_text ??
-                            (payloadData as Record<string, unknown>).interpretation_text ??
-                            ""
-                        ).trim()
-                        : JSON.stringify(payloadData, null, 2);
+            const text = extractUranusText(payloadData);
             const uranusRaw =
                 payloadData && typeof payloadData === "object"
                     ? (payloadData as Record<string, unknown>)
@@ -1816,6 +1857,26 @@ export default function CalculationsPage() {
                     <div style={{ marginTop: 6, color: "rgba(245,240,233,.80)" }}>
                         {err}
                     </div>
+                </div>
+            )}
+
+            {loading && activeKind && activeKind !== "natal" && (
+                <div
+                    style={{
+                        padding: 18,
+                        borderRadius: 22,
+                        border: "1px solid rgba(224,197,143,.14)",
+                        background: "rgba(17,34,80,.16)",
+                        display: "grid",
+                        gap: 12,
+                    }}
+                >
+                    <div style={{ fontWeight: 900, fontSize: 16 }}>
+                        {loadingLabels[activeKind][loadingStep]}
+                        <AnimatedDots />
+                    </div>
+
+                    <AstroLoading />
                 </div>
             )}
 
