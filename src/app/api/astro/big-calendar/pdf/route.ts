@@ -49,13 +49,18 @@ export async function POST(req: NextRequest) {
             throw new RouteError("Недостаточно данных для сборки PDF.", 400);
         }
 
+        const resolvedBannerUrl =
+            bannerUrl && bannerUrl.startsWith("/")
+                ? new URL(bannerUrl, req.url).toString()
+                : bannerUrl;
+
         const payload = {
             content,
             general_p2: summary,
             name,
             birth_date: formatBirthDate(birthDate),
             birth_time: birthTime,
-            ...(bannerUrl ? { banner_url: bannerUrl } : {}),
+            ...(resolvedBannerUrl ? { banner_url: resolvedBannerUrl } : {}),
             ...(title ? { title } : {}),
             ...(template ? { template } : {}),
         };
