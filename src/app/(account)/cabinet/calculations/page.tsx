@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
     AnimatedDots,
@@ -50,7 +50,7 @@ const URANUS_GEMINI_PRODUCT: ProductRow = {
     sort_order: 999,
 };
 
-export default function CalculationsPage() {
+function CalculationsPageContent() {
     const searchParams = useSearchParams();
     const API =
         process.env.NEXT_PUBLIC_ASTRO_API_BASE?.trim() || "http://127.0.0.1:8011";
@@ -1944,5 +1944,12 @@ export default function CalculationsPage() {
                 </div>
             )}
         </div>
+    );
+}
+export default function CalculationsPage() {
+    return (
+        <Suspense fallback={<div style={{ padding: 24 }}>Загружаем…</div>}>
+            <CalculationsPageContent />
+        </Suspense>
     );
 }

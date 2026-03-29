@@ -54,10 +54,10 @@ export default function UranGuideLeadPage() {
   }
 
   return (
-    <main className="shell">
+      <main className="shell" style={{ marginBottom: -400 }}>
         <section
             className="card ambient"
-            style={{ width: "100%", maxWidth: 780, marginTop: -80 }}
+            style={{ width: "100%", maxWidth: 780, marginTop: -400 }}
         >
         <h1 className="h1" style={{ marginTop: 0, marginBottom: 8 }}>Путеводитель «Уран в Близнецах»</h1>
 
