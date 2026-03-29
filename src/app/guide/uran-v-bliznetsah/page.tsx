@@ -58,7 +58,7 @@ export default function UranGuideLeadPage() {
       <section
         style={{
           width: "100%",
-          maxWidth: 640,
+          maxWidth: 780,
           background: "rgba(15, 23, 42, 0.7)",
           border: "1px solid rgba(148, 163, 184, 0.25)",
           borderRadius: 20,
@@ -67,7 +67,7 @@ export default function UranGuideLeadPage() {
       >
         <h1 style={{ marginTop: 0, marginBottom: 8 }}>Путеводитель «Уран в Близнецах»</h1>
         <p style={{ marginTop: 0, opacity: 0.85 }}>
-          Оставьте имя и email, подтвердите политику конфиденциальности — и получите доступ к PDF.
+          Оставьте имя и email, подтвердите согласия — и получите доступ к PDF.
         </p>
 
         <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, marginTop: 18 }}>
@@ -104,7 +104,7 @@ export default function UranGuideLeadPage() {
                 style={{ marginTop: 2 }}
               />
               <span>
-                Я даю согласие на <Link href="/privacy">обработку персональных данных</Link>.
+                Я даю согласие на <a href={legalLinks.personalData} target="_blank" rel="noopener noreferrer">обработку персональных данных</a>.
               </span>
             </label>
 
@@ -116,7 +116,9 @@ export default function UranGuideLeadPage() {
                 required
                 style={{ marginTop: 2 }}
               />
-              <span>Я согласен(а) на получение рекламы и рекламной информации.</span>
+              <span>
+                Я согласен(а) на <a href={legalLinks.ads} target="_blank" rel="noopener noreferrer">получение рекламно-информационных сообщений</a>.
+              </span>
             </label>
           </div>
 
@@ -139,16 +141,6 @@ export default function UranGuideLeadPage() {
         </form>
 
         {status === "error" && <p style={{ marginTop: 14, color: "#fda4af" }}>{errorText}</p>}
-
-        <div style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid rgba(148,163,184,.25)", fontSize: 13, opacity: 0.9 }}>
-          <div style={{ marginBottom: 6 }}>Документы:</div>
-          <div style={{ display: "grid", gap: 4 }}>
-            <a href={legalLinks.privacy} target="_blank" rel="noopener noreferrer">Политика конфиденциальности</a>
-            <a href={legalLinks.agreement} target="_blank" rel="noopener noreferrer">Пользовательское соглашение</a>
-            <a href={legalLinks.personalData} target="_blank" rel="noopener noreferrer">Согласие на обработку персональных данных</a>
-            <a href={legalLinks.ads} target="_blank" rel="noopener noreferrer">Согласие на получение рекламно-информационных сообщений</a>
-          </div>
-        </div>
 
         {status === "success" && (
           <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
@@ -184,6 +176,47 @@ export default function UranGuideLeadPage() {
             </div>
           </div>
         )}
+
+        <footer
+          style={{
+            marginTop: 28,
+            paddingTop: 22,
+            borderTop: "1px solid rgba(148,163,184,.25)",
+            display: "grid",
+            gridTemplateColumns: "1.2fr 1fr 1fr",
+            gap: 20,
+            fontSize: 14,
+          }}
+        >
+          <div style={{ opacity: 0.9 }}>
+            <div style={{ fontWeight: 700, marginBottom: 10 }}>Татьяна Ермолина</div>
+            <div style={{ opacity: 0.8 }}>Проект личностно-ориентированной астрологии</div>
+          </div>
+
+          <div>
+            <div style={{ opacity: 0.65, marginBottom: 8, textTransform: "lowercase" }}>инфо</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              <a href={legalLinks.privacy} target="_blank" rel="noopener noreferrer">Политика конфиденциальности</a>
+              <a href={legalLinks.agreement} target="_blank" rel="noopener noreferrer">Пользовательское соглашение</a>
+              <a href={legalLinks.personalData} target="_blank" rel="noopener noreferrer">Согласие на обработку персональных данных</a>
+              <a href={legalLinks.ads} target="_blank" rel="noopener noreferrer">Согласие на получение рекламной информации</a>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ opacity: 0.65, marginBottom: 8, textTransform: "lowercase" }}>данные</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div>ИП Ермолина Татьяна Николаевна</div>
+              <div>© 2014-2026</div>
+              <div>ИНН 300401721008</div>
+              <a href="mailto:info@astrofuture.ru">Почта info@astrofuture.ru</a>
+            </div>
+          </div>
+        </footer>
+
+        <div style={{ marginTop: 14, fontSize: 13, opacity: 0.75 }}>
+          <Link href="/main">Вернуться на главную</Link>
+        </div>
       </section>
     </main>
   );
