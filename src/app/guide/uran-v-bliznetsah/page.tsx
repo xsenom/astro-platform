@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
+import { legalLinks } from "@/lib/email/shared-footer";
 
 type SubmitState = "idle" | "loading" | "success" | "error";
 
@@ -138,6 +139,16 @@ export default function UranGuideLeadPage() {
         </form>
 
         {status === "error" && <p style={{ marginTop: 14, color: "#fda4af" }}>{errorText}</p>}
+
+        <div style={{ marginTop: 18, paddingTop: 12, borderTop: "1px solid rgba(148,163,184,.25)", fontSize: 13, opacity: 0.9 }}>
+          <div style={{ marginBottom: 6 }}>Документы:</div>
+          <div style={{ display: "grid", gap: 4 }}>
+            <a href={legalLinks.privacy} target="_blank" rel="noopener noreferrer">Политика конфиденциальности</a>
+            <a href={legalLinks.agreement} target="_blank" rel="noopener noreferrer">Пользовательское соглашение</a>
+            <a href={legalLinks.personalData} target="_blank" rel="noopener noreferrer">Согласие на обработку персональных данных</a>
+            <a href={legalLinks.ads} target="_blank" rel="noopener noreferrer">Согласие на получение рекламно-информационных сообщений</a>
+          </div>
+        </div>
 
         {status === "success" && (
           <div style={{ marginTop: 16, display: "grid", gap: 10 }}>

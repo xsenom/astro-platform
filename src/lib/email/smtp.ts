@@ -1,6 +1,12 @@
 import net from "node:net";
 import tls from "node:tls";
 
+type SmtpAttachment = {
+    filename: string;
+    content: Buffer | string;
+    contentType?: string;
+};
+
 function onceLine(socket: net.Socket | tls.TLSSocket): Promise<string> {
     return new Promise((resolve, reject) => {
         let buffer = "";
@@ -42,27 +48,69 @@ async function writeAndRead(socket: net.Socket | tls.TLSSocket, command: string,
     return response;
 }
 
-function buildMessage(params: { from: string; to: string; subject: string; text?: string; html?: string; replyTo?: string }) {
-    const boundary = `astro_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+function toBase64(value: Buffer | string) {
+    return Buffer.isBuffer(value) ? value.toString("base64") : Buffer.from(value, "utf8").toString("base64");
+}
+
+function buildMessage(params: {
+    from: string;
+    to: string;
+    subject: string;
+    text?: string;
+    html?: string;
+    replyTo?: string;
+    attachments?: SmtpAttachment[];
+}) {
+    const altBoundary = `astro_alt_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const mixedBoundary = `astro_mix_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const hasAttachments = Array.isArray(params.attachments) && params.attachments.length > 0;
+
     const headers = [
         `From: ${params.from}`,
         `To: ${params.to}`,
         `Subject: =?UTF-8?B?${Buffer.from(params.subject, "utf8").toString("base64")}?=`,
         ...(params.replyTo ? [`Reply-To: ${params.replyTo}`] : []),
         "MIME-Version: 1.0",
-        `Content-Type: multipart/alternative; boundary=\"${boundary}\"`,
+        hasAttachments
+            ? `Content-Type: multipart/mixed; boundary=\"${mixedBoundary}\"`
+            : `Content-Type: multipart/alternative; boundary=\"${altBoundary}\"`,
         "",
     ];
 
-    const parts: string[] = [];
+    const altParts: string[] = [];
     if (params.text) {
-        parts.push(`--${boundary}`, "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: 8bit", "", params.text, "");
+        altParts.push(`--${altBoundary}`, "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: 8bit", "", params.text, "");
     }
     if (params.html) {
-        parts.push(`--${boundary}`, "Content-Type: text/html; charset=utf-8", "Content-Transfer-Encoding: 8bit", "", params.html, "");
+        altParts.push(`--${altBoundary}`, "Content-Type: text/html; charset=utf-8", "Content-Transfer-Encoding: 8bit", "", params.html, "");
     }
-    parts.push(`--${boundary}--`, "");
-    return [...headers, ...parts].join("\r\n");
+    altParts.push(`--${altBoundary}--`, "");
+
+    if (!hasAttachments) {
+        return [...headers, ...altParts].join("\r\n");
+    }
+
+    const mixedParts: string[] = [
+        `--${mixedBoundary}`,
+        `Content-Type: multipart/alternative; boundary=\"${altBoundary}\"`,
+        "",
+        ...altParts,
+    ];
+
+    for (const attachment of params.attachments || []) {
+        mixedParts.push(
+            `--${mixedBoundary}`,
+            `Content-Type: ${attachment.contentType || "application/octet-stream"}; name=\"${attachment.filename}\"`,
+            "Content-Transfer-Encoding: base64",
+            `Content-Disposition: attachment; filename=\"${attachment.filename}\"`,
+            "",
+            toBase64(attachment.content),
+            ""
+        );
+    }
+
+    mixedParts.push(`--${mixedBoundary}--`, "");
+    return [...headers, ...mixedParts].join("\r\n");
 }
 
 export async function sendSmtpMail(params: {
@@ -77,6 +125,7 @@ export async function sendSmtpMail(params: {
     text?: string;
     html?: string;
     replyTo?: string;
+    attachments?: SmtpAttachment[];
 }) {
     const socket = params.secure
         ? tls.connect({ host: params.host, port: params.port, servername: params.host })
