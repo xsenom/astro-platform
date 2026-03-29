@@ -123,8 +123,16 @@ export default function CalculationsPage() {
             return payloadData.trim();
         }
 
-        if (!payloadData || typeof payloadData !== "object") {
+        if (payloadData === null) {
+            return "null";
+        }
+
+        if (payloadData === undefined) {
             return "";
+        }
+
+        if (typeof payloadData !== "object") {
+            return String(payloadData).trim();
         }
 
         const candidate = payloadData as Record<string, unknown>;
@@ -1177,7 +1185,9 @@ export default function CalculationsPage() {
             }
 
             const payloadData = json.data;
-            const text = extractUranusText(payloadData);
+            const text =
+                extractUranusText(payloadData) ||
+                "Расчёт выполнен, но backend вернул пустой текст.";
             const uranusRaw =
                 payloadData && typeof payloadData === "object"
                     ? (payloadData as Record<string, unknown>)
@@ -1194,10 +1204,6 @@ export default function CalculationsPage() {
                 file_name: `Уран_в_Близнецах_${profile?.birth_date ?? targetDate}.pdf`,
                 render_endpoint: "/api/astro/big-calendar/pdf",
             };
-
-            if (!text) {
-                throw new Error("Backend не вернул текст расчёта");
-            }
 
             setResult({
                 kind: "uranus_gemini",
