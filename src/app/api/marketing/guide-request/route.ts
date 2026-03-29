@@ -2,12 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminClient } from "@/lib/admin/auth";
 import { sendSmtpMail } from "@/lib/email/smtp";
 
-function getGuidePdfUrl() {
-  return (
-    process.env.URANUS_GUIDE_PDF_URL ||
-    process.env.NEXT_PUBLIC_URANUS_GUIDE_PDF_URL ||
-    ""
-  ).trim();
+function getGuidePdfConfig() {
+  const externalUrl = (process.env.URANUS_GUIDE_PDF_URL || process.env.NEXT_PUBLIC_URANUS_GUIDE_PDF_URL || "").trim();
+  const localPath = (process.env.URANUS_GUIDE_PDF_PATH || "/guides/uran-v-bliznetsah.pdf").trim();
+  return { externalUrl, localPath };
+}
+
+function buildAbsoluteUrl(req: NextRequest, path: string) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return new URL(normalizedPath, req.nextUrl.origin).toString();
+}
+
+function resolveGuidePdfUrl(req: NextRequest) {
+  const { externalUrl, localPath } = getGuidePdfConfig();
+  if (externalUrl) return externalUrl;
+  return buildAbsoluteUrl(req, localPath || "/guides/uran-v-bliznetsah.pdf");
 }
 
 function normalizeEmail(value: unknown) {
@@ -37,16 +46,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const guidePdfUrl = getGuidePdfUrl();
-    if (!guidePdfUrl) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Не настроена ссылка на PDF. Укажите URANUS_GUIDE_PDF_URL в окружении.",
-        },
-        { status: 500 }
-      );
-    }
+    const guidePdfUrl = resolveGuidePdfUrl(req);
 
     const admin = getAdminClient();
     const nowIso = new Date().toISOString();
