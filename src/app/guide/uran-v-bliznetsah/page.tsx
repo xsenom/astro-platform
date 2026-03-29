@@ -8,14 +8,15 @@ type SubmitState = "idle" | "loading" | "success" | "error";
 export default function UranGuideLeadPage() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
-  const [acceptedPrivacy, setAcceptedPrivacy] = useState(false);
+  const [acceptedPersonalData, setAcceptedPersonalData] = useState(false);
+  const [acceptedAds, setAcceptedAds] = useState(false);
   const [status, setStatus] = useState<SubmitState>("idle");
   const [errorText, setErrorText] = useState("");
   const [pdfUrl, setPdfUrl] = useState("");
 
   const canSubmit = useMemo(() => {
-    return fullName.trim().length > 1 && /.+@.+\..+/.test(email.trim()) && acceptedPrivacy;
-  }, [fullName, email, acceptedPrivacy]);
+    return fullName.trim().length > 1 && /.+@.+\..+/.test(email.trim()) && acceptedPersonalData && acceptedAds;
+  }, [fullName, email, acceptedPersonalData, acceptedAds]);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -31,7 +32,8 @@ export default function UranGuideLeadPage() {
         body: JSON.stringify({
           full_name: fullName.trim(),
           email: email.trim(),
-          accepted_privacy: acceptedPrivacy,
+          accepted_personal_data: acceptedPersonalData,
+          accepted_ads: acceptedAds,
         }),
       });
 
@@ -91,18 +93,31 @@ export default function UranGuideLeadPage() {
             />
           </label>
 
-          <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 14 }}>
-            <input
-              type="checkbox"
-              checked={acceptedPrivacy}
-              onChange={(e) => setAcceptedPrivacy(e.target.checked)}
-              required
-              style={{ marginTop: 2 }}
-            />
-            <span>
-              Я соглашаюсь с <Link href="/privacy">политикой конфиденциальности</Link>.
-            </span>
-          </label>
+          <div style={{ display: "grid", gap: 10, marginTop: 4, fontSize: 14 }}>
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <input
+                type="checkbox"
+                checked={acceptedPersonalData}
+                onChange={(e) => setAcceptedPersonalData(e.target.checked)}
+                required
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                Я даю согласие на <Link href="/privacy">обработку персональных данных</Link>.
+              </span>
+            </label>
+
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <input
+                type="checkbox"
+                checked={acceptedAds}
+                onChange={(e) => setAcceptedAds(e.target.checked)}
+                required
+                style={{ marginTop: 2 }}
+              />
+              <span>Я согласен(а) на получение рекламы и рекламной информации.</span>
+            </label>
+          </div>
 
           <button
             type="submit"

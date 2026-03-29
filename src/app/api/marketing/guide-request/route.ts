@@ -29,7 +29,8 @@ export async function POST(req: NextRequest) {
 
     const email = normalizeEmail(body?.email);
     const fullName = String(body?.full_name || "").trim();
-    const acceptedPrivacy = body?.accepted_privacy === true;
+    const acceptedPersonalData = body?.accepted_personal_data === true;
+    const acceptedAds = body?.accepted_ads === true;
 
     if (!fullName) {
       return NextResponse.json({ ok: false, error: "Укажите имя." }, { status: 400 });
@@ -39,9 +40,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Укажите корректный email." }, { status: 400 });
     }
 
-    if (!acceptedPrivacy) {
+    if (!acceptedPersonalData) {
       return NextResponse.json(
-        { ok: false, error: "Нужно подтвердить согласие с политикой конфиденциальности." },
+        { ok: false, error: "Нужно согласие на обработку персональных данных." },
+        { status: 400 }
+      );
+    }
+
+    if (!acceptedAds) {
+      return NextResponse.json(
+        { ok: false, error: "Нужно согласие на получение рекламной информации." },
         { status: 400 }
       );
     }
