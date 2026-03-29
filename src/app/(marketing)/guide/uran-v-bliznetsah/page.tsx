@@ -55,11 +55,12 @@ export default function UranGuideLeadPage() {
 
   return (
     <main className="shell">
-      <section className="card ambient" style={{ width: "100%", maxWidth: 780 }}>
+        <section
+            className="card ambient"
+            style={{ width: "100%", maxWidth: 780, marginTop: -80 }}
+        >
         <h1 className="h1" style={{ marginTop: 0, marginBottom: 8 }}>Путеводитель «Уран в Близнецах»</h1>
-        <p className="muted" style={{ marginTop: 0 }}>
-          Оставьте имя и email, подтвердите согласия — и получите доступ к PDF.
-        </p>
+
 
         <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, marginTop: 18 }}>
           <label style={{ display: "grid", gap: 6 }}>
@@ -80,7 +81,7 @@ export default function UranGuideLeadPage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              placeholder="Ваш email"
               required
             />
           </label>
@@ -136,9 +137,7 @@ export default function UranGuideLeadPage() {
           </div>
         )}
 
-        <div style={{ marginTop: 16, fontSize: 13, opacity: 0.8 }}>
-          <Link className="link" href="/main">Вернуться на главную</Link>
-        </div>
+
       </section>
     </main>
   );

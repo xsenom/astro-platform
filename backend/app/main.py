@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import logging
 from random import choice
 from typing import Dict, List, Optional
-
+from .uranus_gemini import build_uranus_gemini_report
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -1535,5 +1535,31 @@ async def year_finance(
             days=365,
             compact=compact
         )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/uranus_gemini_7y")
+def uranus_gemini_7y(
+        year: int = Query(..., description="Год рождения"),
+        month: int = Query(..., description="Месяц рождения"),
+        day: int = Query(..., description="День рождения"),
+        hour: int = Query(..., description="Час рождения"),
+        minute: int = Query(..., description="Минута рождения"),
+        city_name: str = Query(..., description="Город рождения"),
+        orb: float = Query(1.0, description="Орб аспекта"),
+        step_hours: int = Query(12, description="Шаг сканирования в часах"),
+):
+    try:
+        result = build_uranus_gemini_report(
+            year=year,
+            month=month,
+            day=day,
+            hour=hour,
+            minute=minute,
+            city_name=city_name,
+            orb=orb,
+            step_hours=step_hours,
+        )
+        return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
