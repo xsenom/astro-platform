@@ -54,19 +54,10 @@ export default function UranGuideLeadPage() {
   }
 
   return (
-    <main style={{ minHeight: "100vh", padding: "48px 20px", display: "grid", placeItems: "center" }}>
-      <section
-        style={{
-          width: "100%",
-          maxWidth: 780,
-          background: "rgba(15, 23, 42, 0.7)",
-          border: "1px solid rgba(148, 163, 184, 0.25)",
-          borderRadius: 20,
-          padding: 24,
-        }}
-      >
-        <h1 style={{ marginTop: 0, marginBottom: 8 }}>Путеводитель «Уран в Близнецах»</h1>
-        <p style={{ marginTop: 0, opacity: 0.85 }}>
+    <main className="shell">
+      <section className="card ambient" style={{ width: "100%", maxWidth: 780 }}>
+        <h1 className="h1" style={{ marginTop: 0, marginBottom: 8 }}>Путеводитель «Уран в Близнецах»</h1>
+        <p className="muted" style={{ marginTop: 0 }}>
           Оставьте имя и email, подтвердите согласия — и получите доступ к PDF.
         </p>
 
@@ -74,23 +65,23 @@ export default function UranGuideLeadPage() {
           <label style={{ display: "grid", gap: 6 }}>
             <span>Имя</span>
             <input
+              className="input"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="Ваше имя"
               required
-              style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #64748b", background: "#0b1220" }}
             />
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
             <span>Email</span>
             <input
+              className="input"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
               required
-              style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #64748b", background: "#0b1220" }}
             />
           </label>
 
@@ -104,7 +95,7 @@ export default function UranGuideLeadPage() {
                 style={{ marginTop: 2 }}
               />
               <span>
-                Я даю согласие на <a href={legalLinks.personalData} target="_blank" rel="noopener noreferrer">обработку персональных данных</a>.
+                Я даю согласие на <a className="link" href={legalLinks.personalData} target="_blank" rel="noopener noreferrer">обработку персональных данных</a>.
               </span>
             </label>
 
@@ -117,25 +108,12 @@ export default function UranGuideLeadPage() {
                 style={{ marginTop: 2 }}
               />
               <span>
-                Я согласен(а) на <a href={legalLinks.ads} target="_blank" rel="noopener noreferrer">получение рекламно-информационных сообщений</a>.
+                Я согласен(а) на <a className="link" href={legalLinks.ads} target="_blank" rel="noopener noreferrer">получение рекламно-информационных сообщений</a>.
               </span>
             </label>
           </div>
 
-          <button
-            type="submit"
-            disabled={!canSubmit || status === "loading"}
-            style={{
-              marginTop: 6,
-              padding: "12px 14px",
-              borderRadius: 12,
-              border: "none",
-              cursor: canSubmit ? "pointer" : "not-allowed",
-              background: canSubmit ? "#6366f1" : "#475569",
-              color: "#fff",
-              fontWeight: 700,
-            }}
-          >
+          <button type="submit" disabled={!canSubmit || status === "loading"} className="btn btnPrimary" style={{ marginTop: 6 }}>
             {status === "loading" ? "Отправляем…" : "Получить путеводитель"}
           </button>
         </form>
@@ -148,74 +126,18 @@ export default function UranGuideLeadPage() {
               Готово! Мы отправили путеводитель на {email.trim()}.
             </p>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <a
-                href={pdfUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "1px solid #64748b",
-                  textDecoration: "none",
-                }}
-              >
+              <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="btn">
                 Открыть путеводитель
               </a>
-              <a
-                href={pdfUrl}
-                download
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "1px solid #64748b",
-                  textDecoration: "none",
-                }}
-              >
+              <a href={pdfUrl} download className="btn">
                 Скачать путеводитель
               </a>
             </div>
           </div>
         )}
 
-        <footer
-          style={{
-            marginTop: 28,
-            paddingTop: 22,
-            borderTop: "1px solid rgba(148,163,184,.25)",
-            display: "grid",
-            gridTemplateColumns: "1.2fr 1fr 1fr",
-            gap: 20,
-            fontSize: 14,
-          }}
-        >
-          <div style={{ opacity: 0.9 }}>
-            <div style={{ fontWeight: 700, marginBottom: 10 }}>Татьяна Ермолина</div>
-            <div style={{ opacity: 0.8 }}>Проект личностно-ориентированной астрологии</div>
-          </div>
-
-          <div>
-            <div style={{ opacity: 0.65, marginBottom: 8, textTransform: "lowercase" }}>инфо</div>
-            <div style={{ display: "grid", gap: 6 }}>
-              <a href={legalLinks.privacy} target="_blank" rel="noopener noreferrer">Политика конфиденциальности</a>
-              <a href={legalLinks.agreement} target="_blank" rel="noopener noreferrer">Пользовательское соглашение</a>
-              <a href={legalLinks.personalData} target="_blank" rel="noopener noreferrer">Согласие на обработку персональных данных</a>
-              <a href={legalLinks.ads} target="_blank" rel="noopener noreferrer">Согласие на получение рекламной информации</a>
-            </div>
-          </div>
-
-          <div>
-            <div style={{ opacity: 0.65, marginBottom: 8, textTransform: "lowercase" }}>данные</div>
-            <div style={{ display: "grid", gap: 6 }}>
-              <div>ИП Ермолина Татьяна Николаевна</div>
-              <div>© 2014-2026</div>
-              <div>ИНН 300401721008</div>
-              <a href="mailto:info@astrofuture.ru">Почта info@astrofuture.ru</a>
-            </div>
-          </div>
-        </footer>
-
-        <div style={{ marginTop: 14, fontSize: 13, opacity: 0.75 }}>
-          <Link href="/main">Вернуться на главную</Link>
+        <div style={{ marginTop: 16, fontSize: 13, opacity: 0.8 }}>
+          <Link className="link" href="/main">Вернуться на главную</Link>
         </div>
       </section>
     </main>
