@@ -30,6 +30,17 @@ type DashboardPayload = {
         sent: number;
         failed: number;
     }>;
+    favorable_days_totals: {
+        requested_total: number;
+        sent_total: number;
+        failed_total: number;
+    };
+    favorable_days_by_day: Array<{
+        day: string;
+        requested: number;
+        sent: number;
+        failed: number;
+    }>;
     campaigns: Array<{
         id: string;
         created_at: string;
@@ -153,6 +164,19 @@ export default function AdminDashboardPage() {
                         </div>
                     </div>
                 ))}
+            </section>
+
+            <section className="card ambient" style={{ display: "grid", gap: 10 }}>
+                <h2 style={{ margin: 0 }}>Благоприятные дни на месяц — статистика</h2>
+                {data && (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                        <Metric label="Запросов" value={data.favorable_days_totals.requested_total} />
+                        <Metric label="Отправлено на email" value={data.favorable_days_totals.sent_total} />
+                        <Metric label="Ошибок" value={data.favorable_days_totals.failed_total} />
+                    </div>
+                )}
+                <h3 style={{ margin: "8px 0 0", fontSize: 16 }}>Динамика по дням (30 дней)</h3>
+                <GuideTrend rows={data?.favorable_days_by_day ?? []} />
             </section>
         </main>
     );

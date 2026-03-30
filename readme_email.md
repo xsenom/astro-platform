@@ -36,18 +36,27 @@ supabase db push
 - `supabase/migrations/20260330133000_marketing_guide_request_consents.sql`
 
 Создаёт таблицу `marketing_guide_requests`:
-- статус заявки (`requested/failed/sent`)
+- статус заявки (`requested/failed/issued`)
 - флаг `email_sent`
 - текст ошибки `email_error`
 - `sent_at`
 - явные флаги согласий: `accepted_personal_data`, `accepted_ads`
+
+3. Лиды «Благоприятные дни на месяц»:
+- `supabase/migrations/20260330150000_favorable_days_leads.sql`
+
+Создаёт таблицу `favorable_days_requests`:
+- данные формы для расчёта,
+- статус заявки (`requested/failed/sent`),
+- факт отправки в почту (`email_sent`),
+- текст ошибки (`email_error`).
 
 ## Как проверить после применения
 
 1. Откройте `/admin/dashboard` — ошибок 500 быть не должно.
 2. Отправьте тестовую заявку на `/guide/uran-v-bliznetsah`.
 3. Проверьте, что в `marketing_guide_requests` появляется запись со статусом:
-   - `sent` при успешной отправке,
+   - `issued` при успешной выдаче путеводителя,
    - `failed` с причиной, если SMTP/конфиг сломан.
 4. Проверьте отписки:
    - в `marketing_contacts` у контактов `source='uranus_guide_pdf'` должен обновляться `marketing_email_opt_in=false`.

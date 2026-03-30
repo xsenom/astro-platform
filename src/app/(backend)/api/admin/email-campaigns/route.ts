@@ -827,6 +827,22 @@ export async function POST(req: NextRequest) {
                     });
                 }
 
+                if (recipientLog) {
+                    await getAdminClient()
+                        .from("email_campaign_recipients")
+                        .update({ status: "sent", error_message: null })
+                        .eq("id", recipientLog.id);
+
+                    await getAdminClient().from("email_delivery_events").insert({
+                        campaign_id: campaignId,
+                        recipient_id: recipientLog.id,
+                        profile_id: recipient.profile_id ?? null,
+                        email: recipient.email,
+                        event_type: "delivered",
+                        event_status: "ok",
+                    });
+                }
+
                 sent += 1;
 
                 console.log("[email-campaigns] sent ok:", recipient.email);

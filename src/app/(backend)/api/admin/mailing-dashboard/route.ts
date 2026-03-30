@@ -10,7 +10,7 @@ function toDayKey(value: string | null | undefined) {
 
 function isSchemaError(message: string) {
     const text = String(message || "").toLowerCase();
-    return text.includes("does not exist") || text.includes("column") || text.includes("relation");
+    return text.includes("does not exist") || text.includes("column") || text.includes("relation") || text.includes("schema cache") || text.includes("could not find the table");
 }
 
 export async function GET(req: NextRequest) {
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
         }));
     }
 
-    const [guideReqRes, guideUnsubRes, deliveryRes] = await Promise.all([
+    const [guideReqRes, guideUnsubRes, deliveryRes, favorableReqRes] = await Promise.all([
         db.from("marketing_guide_requests").select("created_at, status, email_sent"),
         db
             .from("marketing_contacts")
@@ -57,14 +57,19 @@ export async function GET(req: NextRequest) {
             .select("event_type, created_at")
             .order("created_at", { ascending: false })
             .limit(5000),
+        db.from("favorable_days_requests").select("created_at, status, email_sent"),
     ]);
 
     if (deliveryRes.error) return NextResponse.json({ ok: false, error: deliveryRes.error.message }, { status: 500 });
     if (guideReqRes.error && !isSchemaError(guideReqRes.error.message)) {
         return NextResponse.json({ ok: false, error: guideReqRes.error.message }, { status: 500 });
     }
+    if (favorableReqRes.error && !isSchemaError(favorableReqRes.error.message)) {
+        return NextResponse.json({ ok: false, error: favorableReqRes.error.message }, { status: 500 });
+    }
 
     const guideRows = guideReqRes.error ? [] : guideReqRes.data ?? [];
+    const favorableRows = favorableReqRes.error ? [] : favorableReqRes.data ?? [];
     const deliveryRows = deliveryRes.data ?? [];
 
     const emailTotals = {
@@ -109,6 +114,22 @@ export async function GET(req: NextRequest) {
         .sort((a, b) => a.day.localeCompare(b.day))
         .slice(-30);
 
+    const favorableByDayMap = new Map<string, { day: string; requested: number; sent: number; failed: number }>();
+    for (const row of favorableRows) {
+        const day = toDayKey(row.created_at);
+        if (!day) continue;
+
+        const bucket = favorableByDayMap.get(day) ?? { day, requested: 0, sent: 0, failed: 0 };
+        bucket.requested += 1;
+        if (row.status === "sent" || row.email_sent === true) bucket.sent += 1;
+        if (row.status === "failed") bucket.failed += 1;
+        favorableByDayMap.set(day, bucket);
+    }
+
+    const favorableByDay = Array.from(favorableByDayMap.values())
+        .sort((a, b) => a.day.localeCompare(b.day))
+        .slice(-30);
+
     return NextResponse.json({
         ok: true,
         email_totals: {
@@ -120,6 +141,12 @@ export async function GET(req: NextRequest) {
         },
         guide_totals: guideTotals,
         guide_by_day: guideByDay,
+        favorable_days_totals: {
+            requested_total: favorableRows.length,
+            sent_total: favorableRows.filter((row) => row.status === "sent" || row.email_sent === true).length,
+            failed_total: favorableRows.filter((row) => row.status === "failed").length,
+        },
+        favorable_days_by_day: favorableByDay,
         campaigns,
     });
 }
