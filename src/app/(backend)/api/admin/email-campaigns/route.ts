@@ -41,7 +41,7 @@ function sanitizeRecipient(recipient: CampaignRecipient): CampaignRecipient {
         full_name: recipient.full_name,
         updated_at: recipient.updated_at ?? null,
         zodiac_sign: recipient.zodiac_sign ?? null,
-        profile_id: recipient.profile_id ?? recipient.id,
+        profile_id: recipient.profile_id ?? null,
     };
 }
 
@@ -401,7 +401,112 @@ async function ensureManualContacts(adminUserId: string, manualEmails: string[])
 
     console.log("[email-campaigns] ensureManualContacts: upsert done");
 }
+type EmailLogStatus =
+    | "queued"
+    | "sent"
+    | "failed"
+    | "delivered"
+    | "opened"
+    | "clicked"
+    | "bounced"
+    | "complained"
+    | "unsubscribed";
 
+async function createEmailMessageLog(params: {
+    campaignKey: string;
+    templateKey: string | null;
+    provider: string;
+    email: string;
+    fullName: string | null;
+    subject: string;
+    userId?: string | null;
+    metadata?: Record<string, unknown>;
+}) {
+    const adminClient = getAdminClient();
+
+    const { data, error } = await adminClient
+        .from("email_messages")
+        .insert({
+            campaign_key: params.campaignKey,
+            template_key: params.templateKey,
+            provider: params.provider,
+            email: params.email,
+            full_name: params.fullName,
+            user_id: params.userId ?? null,
+            subject: params.subject,
+            status: "queued",
+            metadata: params.metadata ?? {},
+        })
+        .select("id")
+        .single();
+
+    if (error) {
+        throw new Error(`Не удалось создать лог письма: ${error.message}`);
+    }
+
+    return data;
+}
+
+async function markEmailMessageSent(params: {
+    id: number;
+    providerMessageId?: string | null;
+    providerResponse?: Record<string, unknown>;
+}) {
+    const adminClient = getAdminClient();
+
+    const { error } = await adminClient
+        .from("email_messages")
+        .update({
+            status: "sent",
+            sent_at: new Date().toISOString(),
+            provider_message_id: params.providerMessageId ?? null,
+            provider_response: params.providerResponse ?? {},
+            updated_at: new Date().toISOString(),
+        })
+        .eq("id", params.id);
+
+    if (error) {
+        throw new Error(`Не удалось обновить лог sent: ${error.message}`);
+    }
+}
+
+async function markEmailMessageFailed(params: {
+    id: number;
+    errorMessage: string;
+}) {
+    const adminClient = getAdminClient();
+
+    const { error } = await adminClient
+        .from("email_messages")
+        .update({
+            status: "failed",
+            provider_response: {
+                error: params.errorMessage,
+            },
+            updated_at: new Date().toISOString(),
+        })
+        .eq("id", params.id);
+
+    if (error) {
+        throw new Error(`Не удалось обновить лог failed: ${error.message}`);
+    }
+}
+
+async function isEmailSuppressed(email: string) {
+    const adminClient = getAdminClient();
+
+    const { data, error } = await adminClient
+        .from("email_suppressions")
+        .select("id, reason")
+        .eq("email", email.trim().toLowerCase())
+        .limit(1);
+
+    if (error) {
+        throw new Error(`Не удалось проверить suppression: ${error.message}`);
+    }
+
+    return Array.isArray(data) && data.length > 0;
+}
 export async function POST(req: NextRequest) {
     try {
         console.log("==================================================");
@@ -425,7 +530,8 @@ export async function POST(req: NextRequest) {
         const subject = String(body.subject || "").trim();
         const html = String(body.html || "").trim();
         const text = String(body.text || "").trim();
-
+        const campaignKey = `admin_campaign_${segmentKey}_${new Date().toISOString().slice(0, 10)}`;
+        const templateKey = "admin_email_campaign";
         const manualEmails: string[] = Array.isArray(body.manual_emails)
             ? uniqueEmails(body.manual_emails.map((item: unknown) => String(item || "")))
             : [];
@@ -511,7 +617,43 @@ export async function POST(req: NextRequest) {
         const errors: Array<{ email: string; error: string }> = [];
 
         for (const recipient of recipients) {
+            let emailLogId: number | null = null;
+
             try {
+                console.log("[email-campaigns] processing recipient:", recipient.email);
+
+                const suppressed = await isEmailSuppressed(recipient.email);
+
+                if (suppressed) {
+                    failed += 1;
+
+                    errors.push({
+                        email: recipient.email,
+                        error: "Email в списке исключений (suppression list)",
+                    });
+
+                    console.warn("[email-campaigns] skipped suppressed email:", recipient.email);
+                    continue;
+                }
+
+                const emailLog = await createEmailMessageLog({
+                    campaignKey,
+                    templateKey,
+                    provider: "smtp",
+                    email: recipient.email,
+                    fullName: recipient.full_name ?? null,
+                    subject,
+                    userId: recipient.profile_id ?? null,
+                    metadata: {
+                        segment_key: segmentKey,
+                        test_mode: isTest,
+                        source: "admin_email_campaigns",
+                        origin,
+                    },
+                });
+
+                emailLogId = emailLog.id;
+
                 console.log("[email-campaigns] sending to:", recipient.email);
 
                 await sendSmtpMail({
@@ -528,6 +670,16 @@ export async function POST(req: NextRequest) {
                     replyTo: replyTo || undefined,
                 });
 
+                await markEmailMessageSent({
+                    id: emailLogId,
+                    providerMessageId: null,
+                    providerResponse: {
+                        transport: "smtp",
+                        reply_to: replyTo,
+                        segment_key: segmentKey,
+                    },
+                });
+
                 sent += 1;
 
                 console.log("[email-campaigns] sent ok:", recipient.email);
@@ -535,6 +687,17 @@ export async function POST(req: NextRequest) {
                 failed += 1;
 
                 const errorMessage = error instanceof Error ? error.message : String(error);
+
+                if (emailLogId) {
+                    try {
+                        await markEmailMessageFailed({
+                            id: emailLogId,
+                            errorMessage,
+                        });
+                    } catch (logError) {
+                        console.error("[email-campaigns] failed to mark failed status:", logError);
+                    }
+                }
 
                 errors.push({
                     email: recipient.email,
