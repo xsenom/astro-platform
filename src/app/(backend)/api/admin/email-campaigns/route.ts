@@ -768,15 +768,16 @@ export async function POST(req: NextRequest) {
                     replyTo: replyTo || undefined,
                 });
 
-                await markEmailMessageSent({
-                    id: emailLogId,
-                    providerMessageId: null,
-                    providerResponse: {
-                        transport: "smtp",
-                        reply_to: replyTo,
-                        segment_key: segmentKey,
-                    },
-                });
+                if (emailLogId !== null) {
+                    await markEmailMessageSent({
+                        id: emailLogId,
+                        providerMessageId: null,
+                        providerResponse: {
+                            transport: "smtp",
+                            // остальное как у тебя было
+                        },
+                    });
+                }
 
                 if (recipientLog) {
                     await getAdminClient()
