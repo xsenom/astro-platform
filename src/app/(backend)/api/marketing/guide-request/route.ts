@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import nodemailer from "nodemailer";
 import { NextResponse } from "next/server";
 import { getAdminClient } from "@/lib/admin/auth";
 
@@ -36,6 +37,100 @@ function getGuideConfig(): GuideConfig {
         guidePdfUrl,
         localPdfPath,
     };
+}
+
+function getMailerConfig() {
+    const host = String(process.env.SMTP_HOST || "").trim();
+    const port = Number(process.env.SMTP_PORT || 587);
+    const user = String(process.env.SMTP_USER || "").trim();
+    const pass = String(process.env.SMTP_PASS || "").trim();
+    const fromEmail = String(process.env.SMTP_FROM_EMAIL || user).trim();
+    const fromName = String(process.env.SMTP_FROM_NAME || "StarStalking").trim();
+    const secure = String(process.env.SMTP_SECURE || "false").trim() === "true";
+
+    if (!host || !port || !user || !pass || !fromEmail) {
+        throw new Error(
+            "SMTP не настроен. Проверьте SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM_EMAIL."
+        );
+    }
+
+    return {
+        host,
+        port,
+        user,
+        pass,
+        fromEmail,
+        fromName,
+        secure,
+    };
+}
+
+async function sendGuideEmail(params: {
+    to: string;
+    fullName: string;
+    guidePageUrl: string;
+    guidePdfUrl: string;
+    attachment?: AttachmentData | null;
+}) {
+    const { host, port, user, pass, fromEmail, fromName, secure } = getMailerConfig();
+
+    const transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure,
+        auth: {
+            user,
+            pass,
+        },
+    });
+
+    const recipientName = params.fullName.trim() || "друг";
+    const attachments = params.attachment
+        ? [
+              {
+                  filename: params.attachment.filename,
+                  content: params.attachment.content,
+                  contentType: params.attachment.contentType,
+              },
+          ]
+        : [];
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#1f2937;">
+        <p>Здравствуйте, ${recipientName}!</p>
+        <p>Спасибо за интерес к путеводителю <strong>«Уран в Близнецах»</strong>.</p>
+        <p>Мы прикрепили PDF к этому письму. Также вы можете открыть его по ссылке:</p>
+        <p>
+          <a href="${params.guidePdfUrl}" target="_blank" rel="noopener noreferrer">
+            Открыть путеводитель
+          </a>
+        </p>
+        <p>
+          Страница путеводителя:
+          <a href="${params.guidePageUrl}" target="_blank" rel="noopener noreferrer">
+            перейти
+          </a>
+        </p>
+        <p>Хорошего чтения!</p>
+      </div>
+    `;
+
+    const text =
+        `Здравствуйте, ${recipientName}!\n\n` +
+        `Спасибо за интерес к путеводителю «Уран в Близнецах».\n\n` +
+        `Мы прикрепили PDF к этому письму.\n` +
+        `Открыть путеводитель: ${params.guidePdfUrl}\n\n` +
+        `Страница путеводителя: ${params.guidePageUrl}\n\n` +
+        `Хорошего чтения!`;
+
+    await transporter.sendMail({
+        from: `"${fromName}" <${fromEmail}>`,
+        to: params.to,
+        subject: "Ваш путеводитель «Уран в Близнецах»",
+        text,
+        html,
+        attachments,
+    });
 }
 
 function normalizeEmail(value: unknown) {
@@ -172,10 +267,14 @@ export async function POST(req: Request) {
     logInfo(requestId, "start");
 
     try {
-        let body: any = null;
+        let body: Record<string, unknown> | null = null;
 
         try {
-            body = await req.json();
+            const parsed = await req.json();
+            body =
+                parsed && typeof parsed === "object"
+                    ? (parsed as Record<string, unknown>)
+                    : null;
 
             logInfo(requestId, "body:parsed", {
                 email: maskEmail(body?.email),
@@ -404,20 +503,33 @@ export async function POST(req: Request) {
             to: maskEmail(email),
         });
 
-        /**
-         * ВАЖНО:
-         * Сейчас здесь НЕТ реальной отправки письма.
-         * Ваш старый route тоже не отправлял письмо — он только возвращал email_sent: false.
-         *
-         * Когда подключите реальный mailer (SMTP / Resend / Mailgun / SendGrid),
-         * вставьте отправку именно в этот блок и замените emailSent на true при успехе.
-         */
         let emailSent = false;
-        let emailError: string | null = "Отправщик письма не подключён в route.ts.";
+        let emailError: string | null = null;
 
-        logWarn(requestId, "email:send:skipped", {
-            reason: emailError,
-        });
+        try {
+            await sendGuideEmail({
+                to: email,
+                fullName,
+                guidePageUrl,
+                guidePdfUrl,
+                attachment,
+            });
+
+            emailSent = true;
+
+            logInfo(requestId, "email:send:ok", {
+                to: maskEmail(email),
+                hasAttachment: Boolean(attachment),
+            });
+        } catch (sendError) {
+            emailSent = false;
+            emailError =
+                sendError instanceof Error
+                    ? sendError.message
+                    : "Не удалось отправить письмо.";
+
+            logError(requestId, "email:send:failed", normalizeError(sendError));
+        }
 
         if (requestLogId) {
             logInfo(requestId, "db:marketing_guide_requests:update-issued:start", {
