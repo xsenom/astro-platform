@@ -1,10 +1,22 @@
-import Link from "next/link";
 import { Send, MessageCircle, Sparkles } from "lucide-react";
 
 const aboutLinks = [
-    { label: "Политика конфиденциальности", href: "/privacy" },
-    { label: "Согласие на обработку персональных данных", href: "/personal-data" },
-    { label: "Публичная оферта", href: "/offer" },
+    {
+        label: "Политика конфиденциальности",
+        href: "https://ermolina.pro/politika-konfidentsialnosti",
+    },
+    {
+        label: "Пользовательское соглашение",
+        href: "https://ermolina.pro/soglashenie",
+    },
+    {
+        label: "Согласие на обработку персональных данных",
+        href: "https://ermolina.pro/soglasie_personaliti",
+    },
+    {
+        label: "Согласие на получение рекламно-информационных сообщений",
+        href: "https://ermolina.pro/soglasie",
+    },
 ];
 
 export default function SiteFooter() {
@@ -20,16 +32,16 @@ export default function SiteFooter() {
                                 </div>
 
                                 <div>
-                                    <div className="astroFooterV2__brandName">ТАТЬЯНА ЕРМОЛИНА</div>
+
                                     <div className="astroFooterV2__brandSub">
-                                        Центр прогнозов и консультаций
+                                        Центр прогнозов Татьяны Ермолиной.
                                     </div>
                                 </div>
                             </div>
 
                             <p className="astroFooterV2__lead">
                                 Пространство для персональных астрологических разборов, прогнозов и
-                                сохранённых материалов в удобном личном кабинете.
+                                материалов в удобном личном кабинете.
                             </p>
 
                             <div className="astroFooterV2__socials">
@@ -55,12 +67,18 @@ export default function SiteFooter() {
                             </div>
                         </div>
 
-                        <nav className="astroFooterV2__col" aria-label="О проекте">
-                            <h3 className="astroFooterV2__title">О проекте</h3>
+                        <nav className="astroFooterV2__col" aria-label="Документы">
+                            <h3 className="astroFooterV2__title">Документы</h3>
                             <ul className="astroFooterV2__list">
                                 {aboutLinks.map((item) => (
                                     <li key={item.label}>
-                                        <Link href={item.href}>{item.label}</Link>
+                                        <a
+                                            href={item.href}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                        >
+                                            {item.label}
+                                        </a>
                                     </li>
                                 ))}
                             </ul>
