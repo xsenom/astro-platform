@@ -277,7 +277,7 @@ export async function POST(req: Request) {
                     : null;
 
             logInfo(requestId, "body:parsed", {
-                email: maskEmail(body?.email),
+                email: maskEmail(String(body?.email || "")),
                 full_name_length: String(body?.full_name || "").trim().length,
                 accepted_personal_data: body?.accepted_personal_data === true,
                 accepted_ads: body?.accepted_ads === true,
