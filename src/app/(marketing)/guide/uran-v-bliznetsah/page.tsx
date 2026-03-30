@@ -84,7 +84,7 @@ export default function UranGuideLeadPage() {
         <>
             <main className="shell uranGuideShell">
                 <section className="card ambient uranGuideCard">
-                    <h1 className="h1 uranGuideTitle">Путеводитель «Уран в Близнецах»EST GUIDE 777</h1>
+                    <h1 className="h1 uranGuideTitle">Путеводитель «Уран в Близнецах»</h1>
 
                     {status !== "success" && (
                         <form onSubmit={onSubmit} className="uranGuideForm">
@@ -181,8 +181,7 @@ export default function UranGuideLeadPage() {
                     {status === "success" && (
                         <div className="uranGuideSuccess">
                             <p className="uranGuideSuccessText">
-                                Готово! Мы также продублировали путеводитель на почту{" "}
-                                {email.trim()}.Проверьте папку спам.
+                                Готово! Путеводитель доступен по кнопкам ниже.
                             </p>
 
                             <div className="uranGuideActions">
@@ -205,174 +204,174 @@ export default function UranGuideLeadPage() {
             </main>
 
             <style jsx>{`
-                .uranGuideShell {
-                    padding-top: 16px !important;
-                    padding-bottom: 0 !important;
-                    min-height: auto !important;
-                }
+        .uranGuideShell {
+          padding-top: 16px !important;
+          padding-bottom: 0 !important;
+          min-height: auto !important;
+        }
 
-                .uranGuideCard {
-                    width: 100% !important;
-                    max-width: 560px !important;
-                    margin: 0 auto !important;
-                }
+        .uranGuideCard {
+          width: 100% !important;
+          max-width: 560px !important;
+          margin: 0 auto !important;
+        }
 
-                .uranGuideTitle {
-                    margin: 0 0 18px !important;
-                    line-height: 1.05 !important;
-                }
+        .uranGuideTitle {
+          margin: 0 0 18px !important;
+          line-height: 1.05 !important;
+        }
 
-                .uranGuideForm {
-                    display: flex !important;
-                    flex-direction: column !important;
-                    gap: 14px !important;
-                    width: 100% !important;
-                }
+        .uranGuideForm {
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 14px !important;
+          width: 100% !important;
+        }
 
-                .uranGuideField {
-                    display: flex !important;
-                    flex-direction: column !important;
-                    gap: 8px !important;
-                    width: 100% !important;
-                }
+        .uranGuideField {
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 8px !important;
+          width: 100% !important;
+        }
 
-                .uranGuideChecksWrap {
-                    display: flex !important;
-                    flex-direction: column !important;
-                    width: 100% !important;
-                    margin-top: 52px !important;
-                    margin-bottom: 46px !important;
-                    padding: 18px 16px !important;
-                    border-radius: 14px !important;
-                    background: rgba(255, 255, 255, 0.03) !important;
-                    border: 1px solid rgba(255, 255, 255, 0.06) !important;
-                }
+        .uranGuideChecksWrap {
+          display: flex !important;
+          flex-direction: column !important;
+          width: 100% !important;
+          margin-top: 52px !important;
+          margin-bottom: 46px !important;
+          padding: 18px 16px !important;
+          border-radius: 14px !important;
+          background: rgba(255, 255, 255, 0.03) !important;
+          border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        }
 
-                .uranGuideCheckBlock {
-                    display: block !important;
-                    width: 100% !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
-                }
+        .uranGuideCheckBlock {
+          display: block !important;
+          width: 100% !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
 
-                .uranGuideCheckBlock + .uranGuideCheckBlock {
-                    margin-top: 16px !important;
-                }
+        .uranGuideCheckBlock + .uranGuideCheckBlock {
+          margin-top: 16px !important;
+        }
 
-                .uranGuideCheckRow {
-                    display: flex !important;
-                    flex-direction: row !important;
-                    align-items: flex-start !important;
-                    gap: 12px !important;
-                    width: 100% !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
-                }
+        .uranGuideCheckRow {
+          display: flex !important;
+          flex-direction: row !important;
+          align-items: flex-start !important;
+          gap: 12px !important;
+          width: 100% !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
 
-                .uranGuideCheckbox {
-                    display: block !important;
-                    width: 18px !important;
-                    min-width: 18px !important;
-                    height: 18px !important;
-                    flex: 0 0 18px !important;
-                    margin: 3px 0 0 0 !important;
-                }
+        .uranGuideCheckbox {
+          display: block !important;
+          width: 18px !important;
+          min-width: 18px !important;
+          height: 18px !important;
+          flex: 0 0 18px !important;
+          margin: 3px 0 0 0 !important;
+        }
 
-                .uranGuideCheckText {
-                    display: block !important;
-                    flex: 1 1 auto !important;
-                    min-width: 0 !important;
-                    margin: 0 !important;
-                    font-size: 16px !important;
-                    line-height: 1.55 !important;
-                    white-space: normal !important;
-                    word-break: break-word !important;
-                    overflow-wrap: anywhere !important;
-                }
+        .uranGuideCheckText {
+          display: block !important;
+          flex: 1 1 auto !important;
+          min-width: 0 !important;
+          margin: 0 !important;
+          font-size: 16px !important;
+          line-height: 1.55 !important;
+          white-space: normal !important;
+          word-break: break-word !important;
+          overflow-wrap: anywhere !important;
+        }
 
-                .uranGuideSubmit {
-                    margin-top: 14px !important;
-                }
+        .uranGuideSubmit {
+          margin-top: 14px !important;
+        }
 
-                .uranGuideError {
-                    margin-top: 14px !important;
-                    color: #fca5a5 !important;
-                    line-height: 1.45 !important;
-                }
+        .uranGuideError {
+          margin-top: 14px !important;
+          color: #fca5a5 !important;
+          line-height: 1.45 !important;
+        }
 
-                .uranGuideSuccess {
-                    margin-top: 14px !important;
-                    display: grid !important;
-                    gap: 12px !important;
-                }
+        .uranGuideSuccess {
+          margin-top: 14px !important;
+          display: grid !important;
+          gap: 12px !important;
+        }
 
-                .uranGuideSuccessText {
-                    margin: 0 !important;
-                    color: #86efac !important;
-                    line-height: 1.45 !important;
-                    word-break: break-word !important;
-                }
+        .uranGuideSuccessText {
+          margin: 0 !important;
+          color: #86efac !important;
+          line-height: 1.45 !important;
+          word-break: break-word !important;
+        }
 
-                .uranGuideActions {
-                    display: flex !important;
-                    gap: 10px !important;
-                    flex-wrap: wrap !important;
-                }
+        .uranGuideActions {
+          display: flex !important;
+          gap: 10px !important;
+          flex-wrap: wrap !important;
+        }
 
-                .uranGuideActionBtn {
-                    display: inline-flex !important;
-                    align-items: center !important;
-                    justify-content: center !important;
-                    min-height: 46px !important;
-                    padding: 12px 18px !important;
-                    border-radius: 14px !important;
-                    text-decoration: none !important;
-                    font-weight: 600 !important;
-                    line-height: 1.1 !important;
-                    color: #3b2d12 !important;
-                    background: #f0d48a !important;
-                    border: 1px solid rgba(240, 212, 138, 0.95) !important;
-                    white-space: nowrap !important;
-                }
+        .uranGuideActionBtn {
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          min-height: 46px !important;
+          padding: 12px 18px !important;
+          border-radius: 14px !important;
+          text-decoration: none !important;
+          font-weight: 600 !important;
+          line-height: 1.1 !important;
+          color: #3b2d12 !important;
+          background: #f0d48a !important;
+          border: 1px solid rgba(240, 212, 138, 0.95) !important;
+          white-space: nowrap !important;
+        }
 
-                @media (max-width: 640px) {
-                    .uranGuideShell {
-                        padding-top: 14px !important;
-                    }
+        @media (max-width: 640px) {
+          .uranGuideShell {
+            padding-top: 14px !important;
+          }
 
-                    .uranGuideCard {
-                        max-width: 100% !important;
-                    }
+          .uranGuideCard {
+            max-width: 100% !important;
+          }
 
-                    .uranGuideChecksWrap {
-                        margin-top: 28px !important;
-                        margin-bottom: 26px !important;
-                        padding: 12px 12px !important;
-                    }
+          .uranGuideChecksWrap {
+            margin-top: 28px !important;
+            margin-bottom: 26px !important;
+            padding: 12px 12px !important;
+          }
 
-                    .uranGuideCheckBlock + .uranGuideCheckBlock {
-                        margin-top: 12px !important;
-                    }
+          .uranGuideCheckBlock + .uranGuideCheckBlock {
+            margin-top: 12px !important;
+          }
 
-                    .uranGuideCheckText {
-                        font-size: 13px !important;
-                    }
+          .uranGuideCheckText {
+            font-size: 13px !important;
+          }
 
-                    .uranGuideSubmit {
-                        margin-top: 12px !important;
-                    }
+          .uranGuideSubmit {
+            margin-top: 12px !important;
+          }
 
-                    .uranGuideActions {
-                        flex-direction: column !important;
-                    }
+          .uranGuideActions {
+            flex-direction: column !important;
+          }
 
-                    .uranGuideActionBtn {
-                        width: 100% !important;
-                        white-space: normal !important;
-                        text-align: center !important;
-                    }
-                }
-            `}</style>
+          .uranGuideActionBtn {
+            width: 100% !important;
+            white-space: normal !important;
+            text-align: center !important;
+          }
+        }
+      `}</style>
         </>
     );
 }
