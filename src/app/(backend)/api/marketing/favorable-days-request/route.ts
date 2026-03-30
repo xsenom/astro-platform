@@ -67,6 +67,8 @@ const FAVORABLE_DAYS_OPENAI_MODEL =
     process.env.FAVORABLE_DAYS_OPENAI_MODEL?.trim() ||
     process.env.OPENAI_MODEL?.trim() ||
     "gpt-4.1-mini";
+const ASTRO_BACKEND_URL =
+    process.env.ASTRO_BACKEND_URL?.trim() || "http://127.0.0.1:8015";
 
 async function readFavorableDaysPrompt() {
     const promptPath = path.join(
@@ -149,6 +151,74 @@ async function createOpenAIInterpretation(prompt: string, input: unknown) {
     }
 
     return text;
+}
+
+async function fetchTransitsMonth(payload: {
+    birthDate: string;
+    birthTime: string;
+    birthCity: string;
+}) {
+    const [yearRaw, monthRaw, dayRaw] = payload.birthDate.split("-");
+    const [hourRaw, minuteRaw] = payload.birthTime.split(":");
+
+    const year = Number.parseInt(yearRaw, 10);
+    const month = Number.parseInt(monthRaw, 10);
+    const day = Number.parseInt(dayRaw, 10);
+    const hour = Number.parseInt(hourRaw, 10);
+    const minute = Number.parseInt(minuteRaw, 10);
+
+    if (
+        !Number.isFinite(year) ||
+        !Number.isFinite(month) ||
+        !Number.isFinite(day) ||
+        !Number.isFinite(hour) ||
+        !Number.isFinite(minute)
+    ) {
+        throw new Error("Не удалось подготовить данные рождения для расчёта transits_month.");
+    }
+
+    const params = new URLSearchParams({
+        year: String(year),
+        month: String(month),
+        day: String(day),
+        hour: String(hour),
+        minute: String(minute),
+        city_name: payload.birthCity,
+    });
+
+    const response = await fetch(
+        `${ASTRO_BACKEND_URL}/transits_month?${params.toString()}`,
+        {
+            method: "GET",
+            cache: "no-store",
+        }
+    );
+
+    const contentType = response.headers.get("content-type") || "";
+    const rawText = await response.text();
+    const json = contentType.includes("application/json")
+        ? JSON.parse(rawText || "{}")
+        : null;
+
+    if (!response.ok || !json || typeof json !== "object") {
+        const fallback =
+            json && typeof json === "object"
+                ? (json as { detail?: string; error?: string }).detail ||
+                  (json as { detail?: string; error?: string }).error
+                : null;
+        throw new Error(
+            fallback ||
+                (rawText.trim()
+                    ? rawText.trim()
+                    : `Сервис transits_month вернул HTTP ${response.status}.`)
+        );
+    }
+
+    const monthTransits = Array.isArray((json as { month_transits?: unknown[] }).month_transits)
+        ? ((json as { month_transits: unknown[] }).month_transits)
+        : [];
+
+    return { monthTransits };
 }
 
 async function buildFavorableDaysPdf(req: NextRequest, payload: {
@@ -253,21 +323,14 @@ export async function POST(req: NextRequest) {
 
         requestId = inserted?.id ? String(inserted.id) : null;
 
-        const calendarRes = await fetch(new URL("/api/astro/big-calendar", req.url), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                birth_date: normalizedBirthDate,
-                birth_time: birthTime,
-                birth_city: birthCity,
-                name: fullName,
-                months: Number.isFinite(months) && months > 0 ? Math.min(Math.floor(months), 3) : 1,
-            }),
+        const { monthTransits } = await fetchTransitsMonth({
+            birthDate: normalizedBirthDate,
+            birthTime,
+            birthCity,
         });
 
-        const calendarJson = await calendarRes.json().catch(() => null);
-        if (!calendarRes.ok || !calendarJson?.ok) {
-            const message = calendarJson?.error || "Не удалось рассчитать благоприятные дни.";
+        if (monthTransits.length === 0) {
+            const message = "Сервис transits_month не вернул благоприятные аспекты на месяц.";
 
             if (requestId) {
                 await admin.from("favorable_days_requests").update({
@@ -280,23 +343,17 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: false, error: message }, { status: 500 });
         }
 
-        const rawCalendar = calendarJson?.rawCalendar || calendarJson?.raw_calendar || null;
-        const aspects = Array.isArray(rawCalendar?.days) ? rawCalendar.days : [];
-
         const favorablePrompt = await readFavorableDaysPrompt();
         const aiInterpretation = await createOpenAIInterpretation(favorablePrompt, {
             name: fullName,
             birth_date: normalizedBirthDate,
             birth_time: birthTime,
             birth_city: birthCity,
-            months: Number.isFinite(months) && months > 0 ? Math.min(Math.floor(months), 3) : 1,
-            aspects,
+            source: "transits_month",
+            month_transits: monthTransits,
         });
 
-        const fallbackSummary =
-            String(calendarJson?.summaryText || "").trim() ||
-            String(calendarJson?.summary_text || "").trim() ||
-            "Персональный астропрогноз на месяц.";
+        const fallbackSummary = `Найдено благоприятных аспектов: ${monthTransits.length}.`;
 
         const pdf = await buildFavorableDaysPdf(req, {
             interpretation: aiInterpretation,
