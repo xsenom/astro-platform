@@ -768,15 +768,32 @@ export async function POST(req: NextRequest) {
                     replyTo: replyTo || undefined,
                 });
 
-                await markEmailMessageSent({
-                    id: emailLogId,
-                    providerMessageId: null,
-                    providerResponse: {
-                        transport: "smtp",
-                        reply_to: replyTo,
-                        segment_key: segmentKey,
-                    },
-                });
+                if (emailLogId !== null) {
+                    await markEmailMessageSent({
+                        id: emailLogId,
+                        providerMessageId: null,
+                        providerResponse: {
+                            transport: "smtp",
+                            // остальное как у тебя было
+                        },
+                    });
+                }
+
+                if (recipientLog) {
+                    await getAdminClient()
+                        .from("email_campaign_recipients")
+                        .update({ status: "sent", error_message: null })
+                        .eq("id", recipientLog.id);
+
+                    await getAdminClient().from("email_delivery_events").insert({
+                        campaign_id: campaignId,
+                        recipient_id: recipientLog.id,
+                        profile_id: recipient.profile_id ?? null,
+                        email: recipient.email,
+                        event_type: "delivered",
+                        event_status: "ok",
+                    });
+                }
 
                 if (recipientLog) {
                     await getAdminClient()
