@@ -46,6 +46,11 @@ function isValidBirthCity(value: string) {
     return /^[\p{L}\s-]{2,}$/u.test(value);
 }
 
+function toIsoBirthDate(value: string) {
+    const [day, month, year] = value.split(".");
+    return `${year}-${month}-${day}`;
+}
+
 export async function POST(req: NextRequest) {
     const admin = getAdminClient();
     let requestId: string | null = null;
@@ -80,12 +85,14 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: false, error: "Укажите корректный город рождения." }, { status: 400 });
         }
 
+        const normalizedBirthDate = toIsoBirthDate(birthDate);
+
         const { data: inserted, error: insertError } = await admin
             .from("favorable_days_requests")
             .insert({
                 full_name: fullName,
                 email,
-                birth_date: birthDate,
+                birth_date: normalizedBirthDate,
                 birth_time: birthTime,
                 birth_city: birthCity,
                 months: Number.isFinite(months) && months > 0 ? Math.min(Math.floor(months), 3) : 1,
@@ -105,7 +112,7 @@ export async function POST(req: NextRequest) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                birth_date: birthDate,
+                birth_date: normalizedBirthDate,
                 birth_time: birthTime,
                 birth_city: birthCity,
                 name: fullName,
