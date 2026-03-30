@@ -1,8 +1,66 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type SubmitState = "idle" | "loading" | "success" | "error";
+type FavorableDaysResponse = {
+    ok?: boolean;
+    error?: string;
+    email_sent?: boolean;
+    email_error?: string;
+    pdf_base64?: string;
+    pdf_file_name?: string;
+};
+
+function isValidEmail(value: string) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isValidBirthDate(value: string) {
+    if (!/^(0[1-9]|[12]\d|3[01])\.(0[1-9]|1[0-2])\.(19|20)\d{2}$/.test(value)) {
+        return false;
+    }
+
+    const [dayRaw, monthRaw, yearRaw] = value.split(".");
+    const day = Number(dayRaw);
+    const month = Number(monthRaw);
+    const year = Number(yearRaw);
+    const date = new Date(year, month - 1, day);
+
+    return (
+        date.getFullYear() === year &&
+        date.getMonth() === month - 1 &&
+        date.getDate() === day
+    );
+}
+
+function isValidBirthTime(value: string) {
+    return /^([01]\d|2[0-3]):([0-5]\d)$/.test(value);
+}
+
+function isValidBirthCity(value: string) {
+    return /^[\p{L}\s-]{2,}$/u.test(value);
+}
+
+function formatBirthDateInput(value: string) {
+    const digits = value.replace(/\D/g, "").slice(0, 8);
+    const day = digits.slice(0, 2);
+    const month = digits.slice(2, 4);
+    const year = digits.slice(4, 8);
+
+    if (digits.length <= 2) return day;
+    if (digits.length <= 4) return `${day}.${month}`;
+    return `${day}.${month}.${year}`;
+}
+
+function formatBirthTimeInput(value: string) {
+    const digits = value.replace(/\D/g, "").slice(0, 4);
+    const hours = digits.slice(0, 2);
+    const minutes = digits.slice(2, 4);
+
+    if (digits.length <= 2) return hours;
+    return `${hours}:${minutes}`;
+}
 
 function isValidEmail(value: string) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -62,6 +120,29 @@ export default function FavorableDaysMonthPage() {
     const [birthCity, setBirthCity] = useState("");
     const [status, setStatus] = useState<SubmitState>("idle");
     const [errorText, setErrorText] = useState("");
+    const [emailSent, setEmailSent] = useState(false);
+    const [emailError, setEmailError] = useState("");
+    const [pdfUrl, setPdfUrl] = useState("");
+    const [pdfFileName, setPdfFileName] = useState("blagopriyatnye-dni-na-mesyac.pdf");
+    const [loadingStepIndex, setLoadingStepIndex] = useState(0);
+
+    const loadingLabels = [
+        "Отправляем запрос на backend-расчёт",
+        "Считаем аспекты и периоды",
+        "Передаём аспекты в GPT‑4.1-mini",
+        "Собираем PDF и отправляем на почту",
+    ];
+
+    const fullNameValue = fullName.trim();
+    const emailValue = email.trim();
+    const birthDateValue = birthDate.trim();
+    const birthTimeValue = birthTime.trim();
+    const birthCityValue = birthCity.trim();
+
+    const emailInvalid = emailValue.length > 0 && !isValidEmail(emailValue);
+    const birthDateInvalid = birthDateValue.length > 0 && !isValidBirthDate(birthDateValue);
+    const birthTimeInvalid = birthTimeValue.length > 0 && !isValidBirthTime(birthTimeValue);
+    const birthCityInvalid = birthCityValue.length > 0 && !isValidBirthCity(birthCityValue);
 
     const fullNameValue = fullName.trim();
     const emailValue = email.trim();
@@ -84,12 +165,33 @@ export default function FavorableDaysMonthPage() {
         );
     }, [fullNameValue, emailValue, birthDateValue, birthTimeValue, birthCityValue]);
 
+    useEffect(() => {
+        if (status !== "loading") return;
+
+        const timer = window.setInterval(() => {
+            setLoadingStepIndex((prev) => (prev + 1) % loadingLabels.length);
+        }, 1500);
+
+        return () => window.clearInterval(timer);
+    }, [status, loadingLabels.length]);
+
+    useEffect(() => {
+        return () => {
+            if (pdfUrl) {
+                URL.revokeObjectURL(pdfUrl);
+            }
+        };
+    }, [pdfUrl]);
+
     async function onSubmit(e: FormEvent<HTMLFormElement>) {
         e.preventDefault();
         if (!canSubmit || status === "loading") return;
 
         setStatus("loading");
+        setLoadingStepIndex(0);
         setErrorText("");
+        setEmailError("");
+        setPdfUrl("");
 
         const res = await fetch("/api/marketing/favorable-days-request", {
             method: "POST",
@@ -104,14 +206,36 @@ export default function FavorableDaysMonthPage() {
             }),
         });
 
-        const json = await res.json().catch(() => null);
+        const json = (await res.json().catch(() => null)) as FavorableDaysResponse | null;
         if (!res.ok || !json?.ok) {
             setStatus("error");
+            setLoadingStepIndex(0);
             setErrorText(json?.error || "Не удалось отправить расчёт.");
             return;
         }
 
+        setEmailSent(json?.email_sent === true);
+        setEmailError(typeof json?.email_error === "string" ? json.email_error : "");
+        setPdfFileName(
+            typeof json?.pdf_file_name === "string" && json.pdf_file_name.trim()
+                ? json.pdf_file_name.trim()
+                : "blagopriyatnye-dni-na-mesyac.pdf"
+        );
+
+        if (typeof json?.pdf_base64 === "string" && json.pdf_base64.length > 0) {
+            const binary = atob(json.pdf_base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i += 1) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+
+            const blob = new Blob([bytes], { type: "application/pdf" });
+            const objectUrl = URL.createObjectURL(blob);
+            setPdfUrl(objectUrl);
+        }
+
         setStatus("success");
+        setLoadingStepIndex(0);
     }
 
     return (
@@ -153,13 +277,38 @@ export default function FavorableDaysMonthPage() {
                         {status === "loading" && (
                             <div className="favorableDaysLoading">
                                 <span className="favorableDaysSpinner" />
-                                <span>Считаем аспекты и готовим интерпретацию…</span>
+                                <span>{loadingLabels[loadingStepIndex]}</span>
                             </div>
                         )}
                     </form>
                 ) : (
-                    <div style={{ color: "rgba(245,240,233,.92)" }}>
-                        Готово! Расчёт отправлен на вашу почту.
+                    <div className="favorableDaysSuccess">
+                        <p style={{ color: "rgba(245,240,233,.92)", margin: 0 }}>
+                            {emailSent
+                                ? "Готово! Расчёт отправлен на вашу почту."
+                                : "Расчёт готов. Если письмо не отправилось, можно открыть или скачать PDF ниже."}
+                        </p>
+                        {!emailSent && emailError ? (
+                            <p style={{ color: "#ff8d8d", margin: 0 }}>
+                                Ошибка отправки письма: {emailError}
+                            </p>
+                        ) : null}
+
+                        {pdfUrl ? (
+                            <div className="favorableDaysActions">
+                                <a
+                                    href={pdfUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="btn btnPrimary"
+                                >
+                                    Открыть расчёт
+                                </a>
+                                <a href={pdfUrl} download={pdfFileName} className="btn btnPrimary">
+                                    Скачать расчёт
+                                </a>
+                            </div>
+                        ) : null}
                     </div>
                 )}
 
@@ -194,6 +343,16 @@ export default function FavorableDaysMonthPage() {
                     to {
                         transform: rotate(360deg);
                     }
+                }
+
+                .favorableDaysSuccess {
+                    display: grid !important;
+                    gap: 12px !important;
+                }
+
+                .favorableDaysActions {
+                    display: grid !important;
+                    gap: 10px !important;
                 }
             `}</style>
         </main>
