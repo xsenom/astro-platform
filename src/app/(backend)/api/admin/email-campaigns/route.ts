@@ -507,6 +507,74 @@ async function isEmailSuppressed(email: string) {
 
     return Array.isArray(data) && data.length > 0;
 }
+
+type CampaignRecipientLog = {
+    id: string;
+    email: string;
+    profile_id: string | null;
+    status: string;
+};
+
+async function createCampaignLog(params: {
+    adminUserId: string;
+    segmentKey: SegmentKey;
+    subject: string;
+    html: string;
+    text: string;
+    recipientsCount: number;
+}) {
+    const { data, error } = await getAdminClient()
+        .from("email_campaigns")
+        .insert({
+            created_by: params.adminUserId,
+            segment_key: params.segmentKey,
+            subject: params.subject,
+            html_body: params.html || null,
+            text_body: params.text || null,
+            status: "sending",
+            recipients_count: params.recipientsCount,
+            sent_count: 0,
+            failed_count: 0,
+        })
+        .select("id")
+        .single();
+
+    if (error || !data?.id) {
+        throw new Error(error?.message || "Не удалось создать запись кампании.");
+    }
+
+    return String(data.id);
+}
+
+async function createCampaignRecipients(params: {
+    campaignId: string;
+    recipients: CampaignRecipient[];
+}) {
+    if (!params.recipients.length) return [] as CampaignRecipientLog[];
+
+    const payload = params.recipients.map((recipient) => ({
+        campaign_id: params.campaignId,
+        profile_id: recipient.profile_id ?? null,
+        email: recipient.email,
+        status: "queued",
+    }));
+
+    const { data, error } = await getAdminClient()
+        .from("email_campaign_recipients")
+        .insert(payload)
+        .select("id, email, profile_id, status");
+
+    if (error) {
+        throw new Error(`Не удалось создать список получателей кампании: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => ({
+        id: String(row.id),
+        email: String(row.email || "").trim().toLowerCase(),
+        profile_id: typeof row.profile_id === "string" ? row.profile_id : null,
+        status: String(row.status || "queued"),
+    }));
+}
 export async function POST(req: NextRequest) {
     try {
         console.log("==================================================");
@@ -611,6 +679,19 @@ export async function POST(req: NextRequest) {
         }
 
         const smtp = getSmtpConfig();
+        const campaignId = await createCampaignLog({
+            adminUserId: admin.userId,
+            segmentKey,
+            subject,
+            html,
+            text,
+            recipientsCount: recipients.length,
+        });
+        const recipientLogs = await createCampaignRecipients({
+            campaignId,
+            recipients,
+        });
+        const recipientLogByEmail = new Map(recipientLogs.map((log) => [log.email, log]));
 
         let sent = 0;
         let failed = 0;
@@ -621,6 +702,7 @@ export async function POST(req: NextRequest) {
 
             try {
                 console.log("[email-campaigns] processing recipient:", recipient.email);
+                const recipientLog = recipientLogByEmail.get(recipient.email);
 
                 const suppressed = await isEmailSuppressed(recipient.email);
 
@@ -631,6 +713,22 @@ export async function POST(req: NextRequest) {
                         email: recipient.email,
                         error: "Email в списке исключений (suppression list)",
                     });
+
+                    if (recipientLog) {
+                        await getAdminClient()
+                            .from("email_campaign_recipients")
+                            .update({ status: "failed", error_message: "suppressed" })
+                            .eq("id", recipientLog.id);
+
+                        await getAdminClient().from("email_delivery_events").insert({
+                            campaign_id: campaignId,
+                            recipient_id: recipientLog.id,
+                            profile_id: recipient.profile_id ?? null,
+                            email: recipient.email,
+                            event_type: "failed",
+                            event_status: "suppressed",
+                        });
+                    }
 
                     console.warn("[email-campaigns] skipped suppressed email:", recipient.email);
                     continue;
@@ -680,6 +778,22 @@ export async function POST(req: NextRequest) {
                     },
                 });
 
+                if (recipientLog) {
+                    await getAdminClient()
+                        .from("email_campaign_recipients")
+                        .update({ status: "sent", error_message: null })
+                        .eq("id", recipientLog.id);
+
+                    await getAdminClient().from("email_delivery_events").insert({
+                        campaign_id: campaignId,
+                        recipient_id: recipientLog.id,
+                        profile_id: recipient.profile_id ?? null,
+                        email: recipient.email,
+                        event_type: "delivered",
+                        event_status: "ok",
+                    });
+                }
+
                 sent += 1;
 
                 console.log("[email-campaigns] sent ok:", recipient.email);
@@ -704,6 +818,24 @@ export async function POST(req: NextRequest) {
                     error: errorMessage,
                 });
 
+                const recipientLog = recipientLogByEmail.get(recipient.email);
+                if (recipientLog) {
+                    await getAdminClient()
+                        .from("email_campaign_recipients")
+                        .update({ status: "failed", error_message: errorMessage })
+                        .eq("id", recipientLog.id);
+
+                    await getAdminClient().from("email_delivery_events").insert({
+                        campaign_id: campaignId,
+                        recipient_id: recipientLog.id,
+                        profile_id: recipient.profile_id ?? null,
+                        email: recipient.email,
+                        event_type: "failed",
+                        event_status: "error",
+                        event_payload: { error: errorMessage },
+                    });
+                }
+
                 console.error("[email-campaigns] send failed:", {
                     email: recipient.email,
                     error: errorMessage,
@@ -726,8 +858,19 @@ export async function POST(req: NextRequest) {
             errors,
         });
 
+        await getAdminClient()
+            .from("email_campaigns")
+            .update({
+                status,
+                sent_count: sent,
+                failed_count: failed,
+                sent_at: new Date().toISOString(),
+            })
+            .eq("id", campaignId);
+
         return NextResponse.json({
             ok: true,
+            campaign_id: campaignId,
             status,
             sent_count: sent,
             failed_count: failed,

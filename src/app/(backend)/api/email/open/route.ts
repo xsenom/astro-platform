@@ -26,19 +26,17 @@ export async function GET(req: NextRequest) {
 
     const { data: recipient } = await admin
         .from("email_campaign_recipients")
-        .select("id, campaign_id, opens_count, opened_at")
+        .select("id, campaign_id, profile_id, email, opened_at")
         .eq("id", recipientId)
         .eq("campaign_id", campaignId)
         .maybeSingle();
 
     if (recipient) {
-        const nextOpens = Number(recipient.opens_count || 0) + 1;
         const firstOpenAt = recipient.opened_at || new Date().toISOString();
 
         await admin
             .from("email_campaign_recipients")
             .update({
-                opens_count: nextOpens,
                 opened_at: firstOpenAt,
             })
             .eq("id", recipientId);
@@ -46,6 +44,8 @@ export async function GET(req: NextRequest) {
         await admin.from("email_delivery_events").insert({
             recipient_id: recipientId,
             campaign_id: campaignId,
+            profile_id: recipient.profile_id ?? null,
+            email: recipient.email ?? null,
             event_type: "opened",
             event_status: "success",
         });
