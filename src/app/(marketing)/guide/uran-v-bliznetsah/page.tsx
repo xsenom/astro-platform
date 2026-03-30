@@ -21,6 +21,8 @@ export default function UranGuideLeadPage() {
     const [status, setStatus] = useState<SubmitState>("idle");
     const [errorText, setErrorText] = useState("");
     const [pdfUrl, setPdfUrl] = useState("");
+    const [emailSent, setEmailSent] = useState(false);
+    const [emailError, setEmailError] = useState("");
 
     const canSubmit = useMemo(() => {
         return (
@@ -73,6 +75,8 @@ export default function UranGuideLeadPage() {
             }
 
             setPdfUrl(typeof json?.pdf_url === "string" ? json.pdf_url : "");
+            setEmailSent(json?.email_sent === true);
+            setEmailError(typeof json?.email_error === "string" ? json.email_error : "");
             setStatus("success");
         } catch {
             setStatus("error");
@@ -181,9 +185,23 @@ export default function UranGuideLeadPage() {
                     {status === "success" && (
                         <div className="uranGuideSuccess">
                             <p className="uranGuideSuccessText">
-                                Готово! Мы также продублировали путеводитель на почту{" "}
-                                {email.trim()}.Проверьте папку спам.
+                                {emailSent ? (
+                                    <>
+                                        Готово! Мы также продублировали путеводитель на почту{" "}
+                                        {email.trim()}. Проверьте папку «Входящие» и «Спам».
+                                    </>
+                                ) : (
+                                    <>
+                                        Заявка принята. Если письмо не было отправлено автоматически,
+                                        вы можете открыть или скачать путеводитель кнопками ниже.
+                                    </>
+                                )}
                             </p>
+                            {!emailSent && emailError ? (
+                                <p className="uranGuideError">
+                                    Ошибка отправки письма: {emailError}
+                                </p>
+                            ) : null}
 
                             <div className="uranGuideActions">
                                 <a

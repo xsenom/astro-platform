@@ -12,6 +12,40 @@ function getEnv(name: string) {
     return String(process.env[name] || "").trim();
 }
 
+function isMissingTableError(message: string) {
+    const normalized = message.toLowerCase();
+    return (
+        normalized.includes("could not find the table") ||
+        normalized.includes("relation") && normalized.includes("does not exist")
+    );
+}
+
+function isValidBirthDate(value: string) {
+    if (!/^(0[1-9]|[12]\d|3[01])\.(0[1-9]|1[0-2])\.(19|20)\d{2}$/.test(value)) {
+        return false;
+    }
+
+    const [dayRaw, monthRaw, yearRaw] = value.split(".");
+    const day = Number(dayRaw);
+    const month = Number(monthRaw);
+    const year = Number(yearRaw);
+    const date = new Date(year, month - 1, day);
+
+    return (
+        date.getFullYear() === year &&
+        date.getMonth() === month - 1 &&
+        date.getDate() === day
+    );
+}
+
+function isValidBirthTime(value: string) {
+    return /^([01]\d|2[0-3]):([0-5]\d)$/.test(value);
+}
+
+function isValidBirthCity(value: string) {
+    return /^[\p{L}\s-]{2,}$/u.test(value);
+}
+
 export async function POST(req: NextRequest) {
     const admin = getAdminClient();
     let requestId: string | null = null;
@@ -34,6 +68,18 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: false, error: "Некорректный email." }, { status: 400 });
         }
 
+        if (!isValidBirthDate(birthDate)) {
+            return NextResponse.json({ ok: false, error: "Дата рождения должна быть в формате ДД.ММ.ГГГГ." }, { status: 400 });
+        }
+
+        if (!isValidBirthTime(birthTime)) {
+            return NextResponse.json({ ok: false, error: "Время рождения должно быть в формате HH:MM." }, { status: 400 });
+        }
+
+        if (!isValidBirthCity(birthCity)) {
+            return NextResponse.json({ ok: false, error: "Укажите корректный город рождения." }, { status: 400 });
+        }
+
         const { data: inserted, error: insertError } = await admin
             .from("favorable_days_requests")
             .insert({
@@ -49,10 +95,11 @@ export async function POST(req: NextRequest) {
             .select("id")
             .single();
 
-        if (insertError) {
+        if (insertError && !isMissingTableError(insertError.message)) {
             return NextResponse.json({ ok: false, error: insertError.message }, { status: 500 });
         }
-        requestId = String(inserted.id);
+
+        requestId = inserted?.id ? String(inserted.id) : null;
 
         const calendarRes = await fetch(new URL("/api/astro/big-calendar", req.url), {
             method: "POST",
