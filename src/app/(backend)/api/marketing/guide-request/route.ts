@@ -78,6 +78,8 @@ async function tryLoadAttachmentFromPublic(publicPath: string) {
 }
 
 export async function POST(req: Request) {
+    let requestLogId: string | null = null;
+
     try {
         const body = await req.json();
 
@@ -117,11 +119,48 @@ export async function POST(req: Request) {
         const { guidePageUrl, guidePdfUrl, localPdfPath } = getGuideConfig();
         const resolvedLocalPdfPath = normalizePublicPath(localPdfPath);
 
+        const admin = getAdminClient();
+        const nowIso = new Date().toISOString();
+
+        const { data: logRow, error: logCreateError } = await admin
+            .from("marketing_guide_requests")
+            .insert({
+                email,
+                full_name: fullName,
+                source: "uranus_guide_pdf",
+                status: "requested",
+                email_sent: false,
+                request_payload: {
+                    accepted_personal_data: acceptedPersonalData,
+                    accepted_ads: acceptedAds,
+                },
+                updated_at: nowIso,
+            })
+            .select("id")
+            .single();
+
+        if (!logCreateError && logRow?.id) {
+            requestLogId = String(logRow.id);
+        } else if (logCreateError) {
+            console.error("[guide-request] failed to create marketing_guide_requests log", logCreateError);
+        }
+
         try {
             assertPublicUrl("URANUS_GUIDE_PAGE_URL", guidePageUrl);
             assertPublicUrl("URANUS_GUIDE_PDF_URL", guidePdfUrl);
         } catch (configError) {
             console.error("[guide-request] invalid guide config", configError);
+
+            if (requestLogId) {
+                await admin
+                    .from("marketing_guide_requests")
+                    .update({
+                        status: "failed",
+                        email_error: configError instanceof Error ? configError.message : String(configError),
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", requestLogId);
+            }
 
             return NextResponse.json(
                 {
@@ -132,9 +171,6 @@ export async function POST(req: Request) {
                 { status: 500 }
             );
         }
-
-        const admin = getAdminClient();
-        const nowIso = new Date().toISOString();
 
         const { error: upsertError } = await admin
             .from("marketing_contacts")
@@ -152,6 +188,17 @@ export async function POST(req: Request) {
         if (upsertError) {
             console.error("[guide-request] marketing_contacts upsert failed", upsertError);
 
+            if (requestLogId) {
+                await admin
+                    .from("marketing_guide_requests")
+                    .update({
+                        status: "failed",
+                        email_error: upsertError.message,
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", requestLogId);
+            }
+
             return NextResponse.json(
                 { ok: false, error: "Не удалось сохранить заявку." },
                 { status: 500 }
@@ -167,6 +214,17 @@ export async function POST(req: Request) {
         const smtpFrom = process.env.SMTP_FROM || "";
 
         if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !smtpFrom) {
+            if (requestLogId) {
+                await admin
+                    .from("marketing_guide_requests")
+                    .update({
+                        status: "failed",
+                        email_error: "SMTP is not configured",
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", requestLogId);
+            }
+
             return NextResponse.json(
                 {
                     ok: false,
@@ -231,19 +289,52 @@ export async function POST(req: Request) {
 
         const attachment = await tryLoadAttachmentFromPublic(resolvedLocalPdfPath);
 
-        await sendSmtpMail({
-            host: smtpHost,
-            port: smtpPort,
-            secure: smtpSecure,
-            username: smtpUser,
-            password: smtpPass,
-            from: smtpFrom,
-            to: email,
-            subject,
-            text,
-            html,
-            attachments: attachment ? [attachment] : undefined,
-        });
+        try {
+            await sendSmtpMail({
+                host: smtpHost,
+                port: smtpPort,
+                secure: smtpSecure,
+                username: smtpUser,
+                password: smtpPass,
+                from: smtpFrom,
+                to: email,
+                subject,
+                text,
+                html,
+                attachments: attachment ? [attachment] : undefined,
+            });
+        } catch (smtpError) {
+            const smtpMessage = smtpError instanceof Error ? smtpError.message : String(smtpError);
+
+            if (requestLogId) {
+                await admin
+                    .from("marketing_guide_requests")
+                    .update({
+                        status: "failed",
+                        email_error: smtpMessage,
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", requestLogId);
+            }
+
+            return NextResponse.json(
+                { ok: false, error: "Не удалось отправить письмо с путеводителем." },
+                { status: 500 }
+            );
+        }
+
+        if (requestLogId) {
+            await admin
+                .from("marketing_guide_requests")
+                .update({
+                    status: "sent",
+                    email_sent: true,
+                    email_error: null,
+                    sent_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("id", requestLogId);
+        }
 
         return NextResponse.json({
             ok: true,
@@ -253,6 +344,22 @@ export async function POST(req: Request) {
         });
     } catch (error) {
         console.error("[guide-request][POST] failed", error);
+
+        if (requestLogId) {
+            try {
+                const admin = getAdminClient();
+                await admin
+                    .from("marketing_guide_requests")
+                    .update({
+                        status: "failed",
+                        email_error: error instanceof Error ? error.message : String(error),
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", requestLogId);
+            } catch (updateError) {
+                console.error("[guide-request][POST] failed to update log", updateError);
+            }
+        }
 
         return NextResponse.json(
             { ok: false, error: "Внутренняя ошибка сервера." },
