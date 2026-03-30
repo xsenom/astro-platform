@@ -2,8 +2,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { getAdminClient } from "@/lib/admin/auth";
-import { buildCommonEmailFooterHtml, buildCommonEmailFooterText } from "@/lib/email/shared-footer";
-import { sendSmtpMail } from "@/lib/email/smtp";
 
 function getGuideConfig() {
     const guidePageUrl = (
@@ -78,6 +76,8 @@ async function tryLoadAttachmentFromPublic(publicPath: string) {
 }
 
 export async function POST(req: Request) {
+    let requestLogId: string | null = null;
+
     try {
         const body = await req.json();
 
@@ -117,11 +117,50 @@ export async function POST(req: Request) {
         const { guidePageUrl, guidePdfUrl, localPdfPath } = getGuideConfig();
         const resolvedLocalPdfPath = normalizePublicPath(localPdfPath);
 
+        const admin = getAdminClient();
+        const nowIso = new Date().toISOString();
+
+        const { data: logRow, error: logCreateError } = await admin
+            .from("marketing_guide_requests")
+            .insert({
+                email,
+                full_name: fullName,
+                source: "uranus_guide_pdf",
+                status: "requested",
+                email_sent: false,
+                accepted_personal_data: acceptedPersonalData,
+                accepted_ads: acceptedAds,
+                request_payload: {
+                    accepted_personal_data: acceptedPersonalData,
+                    accepted_ads: acceptedAds,
+                },
+                updated_at: nowIso,
+            })
+            .select("id")
+            .single();
+
+        if (!logCreateError && logRow?.id) {
+            requestLogId = String(logRow.id);
+        } else if (logCreateError) {
+            console.error("[guide-request] failed to create marketing_guide_requests log", logCreateError);
+        }
+
         try {
             assertPublicUrl("URANUS_GUIDE_PAGE_URL", guidePageUrl);
             assertPublicUrl("URANUS_GUIDE_PDF_URL", guidePdfUrl);
         } catch (configError) {
             console.error("[guide-request] invalid guide config", configError);
+
+            if (requestLogId) {
+                await admin
+                    .from("marketing_guide_requests")
+                    .update({
+                        status: "failed",
+                        email_error: configError instanceof Error ? configError.message : String(configError),
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", requestLogId);
+            }
 
             return NextResponse.json(
                 {
@@ -132,9 +171,6 @@ export async function POST(req: Request) {
                 { status: 500 }
             );
         }
-
-        const admin = getAdminClient();
-        const nowIso = new Date().toISOString();
 
         const { error: upsertError } = await admin
             .from("marketing_contacts")
@@ -152,107 +188,62 @@ export async function POST(req: Request) {
         if (upsertError) {
             console.error("[guide-request] marketing_contacts upsert failed", upsertError);
 
+            if (requestLogId) {
+                await admin
+                    .from("marketing_guide_requests")
+                    .update({
+                        status: "failed",
+                        email_error: upsertError.message,
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", requestLogId);
+            }
+
             return NextResponse.json(
                 { ok: false, error: "Не удалось сохранить заявку." },
                 { status: 500 }
             );
         }
 
-        const smtpHost = process.env.SMTP_HOST || "";
-        const smtpPort = Number(process.env.SMTP_PORT || "0");
-        const smtpSecure =
-            String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
-        const smtpUser = process.env.SMTP_USER || "";
-        const smtpPass = process.env.SMTP_PASS || "";
-        const smtpFrom = process.env.SMTP_FROM || "";
-
-        if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !smtpFrom) {
-            return NextResponse.json(
-                {
-                    ok: false,
-                    error: "SMTP не настроен: письмо с путеводителем отправить нельзя.",
-                },
-                { status: 500 }
-            );
-        }
-
-        const subject = "Путеводитель по Урану в Близнецах";
-
-        const baseText = [
-            `Здравствуйте, ${fullName}!`,
-            "",
-            "Спасибо за интерес к путеводителю по Урану в Близнецах.",
-            "PDF-файл приложен к этому письму.",
-            "",
-            `Открыть страницу путеводителя: ${guidePageUrl}`,
-            `Скачать PDF напрямую: ${guidePdfUrl}`,
-            "",
-            "Служба заботы проекта «Татьяна Ермолина».",
-        ].join("\n");
-
-        const text = `${baseText}${buildCommonEmailFooterText(email)}`;
-
-        const baseHtml = `
-      <div style="font-family:Arial,sans-serif;color:#1f2937;line-height:1.55">
-        <p>Здравствуйте, ${fullName}!</p>
-        <p>Спасибо за интерес к путеводителю по Урану в Близнецах.</p>
-        <p><strong>PDF-файл приложен к этому письму.</strong></p>
-
-        <p style="margin:16px 0;">
-          <a
-            href="${guidePageUrl}"
-            target="_blank"
-            rel="noopener noreferrer"
-            style="display:inline-block;padding:12px 18px;background:#1f2937;color:#ffffff;text-decoration:none;border-radius:8px;"
-          >
-            Открыть путеводитель
-          </a>
-        </p>
-
-        <p>
-          Если кнопка не сработала, откройте страницу:
-          <a href="${guidePageUrl}" target="_blank" rel="noopener noreferrer">
-            ${guidePageUrl}
-          </a>
-        </p>
-
-        <p>
-          Прямая ссылка на PDF:
-          <a href="${guidePdfUrl}" target="_blank" rel="noopener noreferrer">
-            Скачать путеводитель
-          </a>
-        </p>
-
-        <p>Служба заботы проекта «Татьяна Ермолина».</p>
-      </div>
-    `;
-
-        const html = `${baseHtml}${buildCommonEmailFooterHtml(email)}`;
-
         const attachment = await tryLoadAttachmentFromPublic(resolvedLocalPdfPath);
 
-        await sendSmtpMail({
-            host: smtpHost,
-            port: smtpPort,
-            secure: smtpSecure,
-            username: smtpUser,
-            password: smtpPass,
-            from: smtpFrom,
-            to: email,
-            subject,
-            text,
-            html,
-            attachments: attachment ? [attachment] : undefined,
-        });
+        if (requestLogId) {
+            await admin
+                .from("marketing_guide_requests")
+                .update({
+                    status: "issued",
+                    email_sent: false,
+                    email_error: null,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("id", requestLogId);
+        }
 
         return NextResponse.json({
             ok: true,
             page_url: guidePageUrl,
             pdf_url: guidePdfUrl,
             has_attachment: Boolean(attachment),
+            email_sent: false,
         });
     } catch (error) {
         console.error("[guide-request][POST] failed", error);
+
+        if (requestLogId) {
+            try {
+                const admin = getAdminClient();
+                await admin
+                    .from("marketing_guide_requests")
+                    .update({
+                        status: "failed",
+                        email_error: error instanceof Error ? error.message : String(error),
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", requestLogId);
+            } catch (updateError) {
+                console.error("[guide-request][POST] failed to update log", updateError);
+            }
+        }
 
         return NextResponse.json(
             { ok: false, error: "Внутренняя ошибка сервера." },

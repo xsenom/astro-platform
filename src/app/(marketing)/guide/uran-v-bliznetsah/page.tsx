@@ -181,8 +181,7 @@ export default function UranGuideLeadPage() {
                     {status === "success" && (
                         <div className="uranGuideSuccess">
                             <p className="uranGuideSuccessText">
-                                Готово! Мы также продублировали путеводитель на почту{" "}
-                                {email.trim()}.Проверьте папку спам.
+                                Готово! Путеводитель доступен по кнопкам ниже.
                             </p>
 
                             <div className="uranGuideActions">
@@ -240,9 +239,9 @@ export default function UranGuideLeadPage() {
           display: flex !important;
           flex-direction: column !important;
           width: 100% !important;
-          margin-top: 38px !important;
-          margin-bottom: 34px !important;
-          padding: 14px 16px !important;
+          margin-top: 52px !important;
+          margin-bottom: 46px !important;
+          padding: 18px 16px !important;
           border-radius: 14px !important;
           background: rgba(255, 255, 255, 0.03) !important;
           border: 1px solid rgba(255, 255, 255, 0.06) !important;
