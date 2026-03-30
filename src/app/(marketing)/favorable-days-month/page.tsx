@@ -112,12 +112,79 @@ function formatBirthTimeInput(value: string) {
     return `${hours}:${minutes}`;
 }
 
+type FavorableDaysResponse = {
+    ok?: boolean;
+    error?: string;
+    email_sent?: boolean;
+    email_error?: string;
+    pdf_base64?: string;
+    pdf_file_name?: string;
+};
+
+function isValidEmail(value: string) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isValidBirthDate(value: string) {
+    if (!/^(0[1-9]|[12]\d|3[01])\.(0[1-9]|1[0-2])\.(19|20)\d{2}$/.test(value)) {
+        return false;
+    }
+
+    const [dayRaw, monthRaw, yearRaw] = value.split(".");
+    const day = Number(dayRaw);
+    const month = Number(monthRaw);
+    const year = Number(yearRaw);
+    const date = new Date(year, month - 1, day);
+
+    return (
+        date.getFullYear() === year &&
+        date.getMonth() === month - 1 &&
+        date.getDate() === day
+    );
+}
+
+function isValidBirthTime(value: string) {
+    return /^([01]\d|2[0-3]):([0-5]\d)$/.test(value);
+}
+
+function isValidBirthCity(value: string) {
+    return /^[\p{L}\s-]{2,}$/u.test(value);
+}
+
+function formatBirthDateInput(value: string) {
+    const digits = value.replace(/\D/g, "").slice(0, 8);
+    const day = digits.slice(0, 2);
+    const month = digits.slice(2, 4);
+    const year = digits.slice(4, 8);
+
+    if (digits.length <= 2) return day;
+    if (digits.length <= 4) return `${day}.${month}`;
+    return `${day}.${month}.${year}`;
+}
+
+function formatBirthTimeInput(value: string) {
+    const digits = value.replace(/\D/g, "").slice(0, 4);
+    const hours = digits.slice(0, 2);
+    const minutes = digits.slice(2, 4);
+
+    if (digits.length <= 2) return hours;
+    return `${hours}:${minutes}`;
+}
+
+const loadingLabels = [
+    "Отправляем запрос на backend-расчёт",
+    "Считаем аспекты и периоды",
+    "Передаём аспекты в GPT‑4.1-mini",
+    "Собираем PDF и отправляем на почту",
+];
+
 export default function FavorableDaysMonthPage() {
     const [fullName, setFullName] = useState("");
     const [email, setEmail] = useState("");
     const [birthDate, setBirthDate] = useState("");
     const [birthTime, setBirthTime] = useState("");
     const [birthCity, setBirthCity] = useState("");
+
     const [status, setStatus] = useState<SubmitState>("idle");
     const [errorText, setErrorText] = useState("");
     const [emailSent, setEmailSent] = useState(false);
@@ -155,13 +222,30 @@ export default function FavorableDaysMonthPage() {
     const birthTimeInvalid = birthTimeValue.length > 0 && !isValidBirthTime(birthTimeValue);
     const birthCityInvalid = birthCityValue.length > 0 && !isValidBirthCity(birthCityValue);
 
+    const [emailSent, setEmailSent] = useState(false);
+    const [emailError, setEmailError] = useState("");
+    const [pdfUrl, setPdfUrl] = useState("");
+    const [pdfFileName, setPdfFileName] = useState("blagopriyatnye-dni-na-mesyac.pdf");
+    const [loadingStepIndex, setLoadingStepIndex] = useState(0);
+
+    const fullNameValue = fullName.trim();
+    const emailValue = email.trim();
+    const birthDateValue = birthDate.trim();
+    const birthTimeValue = birthTime.trim();
+    const birthCityValue = birthCity.trim();
+
+    const emailInvalid = emailValue.length > 0 && !isValidEmail(emailValue);
+    const birthDateInvalid = birthDateValue.length > 0 && !isValidBirthDate(birthDateValue);
+    const birthTimeInvalid = birthTimeValue.length > 0 && !isValidBirthTime(birthTimeValue);
+    const birthCityInvalid = birthCityValue.length > 0 && !isValidBirthCity(birthCityValue);
+
     const canSubmit = useMemo(() => {
         return Boolean(
             fullNameValue &&
-            isValidEmail(emailValue) &&
-            isValidBirthDate(birthDateValue) &&
-            isValidBirthTime(birthTimeValue) &&
-            isValidBirthCity(birthCityValue)
+                isValidEmail(emailValue) &&
+                isValidBirthDate(birthDateValue) &&
+                isValidBirthTime(birthTimeValue) &&
+                isValidBirthCity(birthCityValue)
         );
     }, [fullNameValue, emailValue, birthDateValue, birthTimeValue, birthCityValue]);
 
@@ -173,13 +257,11 @@ export default function FavorableDaysMonthPage() {
         }, 1500);
 
         return () => window.clearInterval(timer);
-    }, [status, loadingLabels.length]);
+    }, [status]);
 
     useEffect(() => {
         return () => {
-            if (pdfUrl) {
-                URL.revokeObjectURL(pdfUrl);
-            }
+            if (pdfUrl) URL.revokeObjectURL(pdfUrl);
         };
     }, [pdfUrl]);
 
@@ -191,22 +273,27 @@ export default function FavorableDaysMonthPage() {
         setLoadingStepIndex(0);
         setErrorText("");
         setEmailError("");
-        setPdfUrl("");
+
+        if (pdfUrl) {
+            URL.revokeObjectURL(pdfUrl);
+            setPdfUrl("");
+        }
 
         const res = await fetch("/api/marketing/favorable-days-request", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                full_name: fullName.trim(),
-                email: email.trim(),
-                birth_date: birthDate.trim(),
-                birth_time: birthTime.trim(),
-                birth_city: birthCity.trim(),
+                full_name: fullNameValue,
+                email: emailValue,
+                birth_date: birthDateValue,
+                birth_time: birthTimeValue,
+                birth_city: birthCityValue,
                 months: 1,
             }),
         });
 
         const json = (await res.json().catch(() => null)) as FavorableDaysResponse | null;
+
         if (!res.ok || !json?.ok) {
             setStatus("error");
             setLoadingStepIndex(0);
@@ -230,8 +317,7 @@ export default function FavorableDaysMonthPage() {
             }
 
             const blob = new Blob([bytes], { type: "application/pdf" });
-            const objectUrl = URL.createObjectURL(blob);
-            setPdfUrl(objectUrl);
+            setPdfUrl(URL.createObjectURL(blob));
         }
 
         setStatus("success");
@@ -267,19 +353,22 @@ export default function FavorableDaysMonthPage() {
                             required
                         />
                         <input className="input" placeholder="Город рождения" value={birthCity} onChange={(e) => setBirthCity(e.target.value)} required />
+
                         {emailInvalid && <p style={{ color: "#ff8d8d", margin: 0 }}>Укажите корректный email.</p>}
                         {birthDateInvalid && <p style={{ color: "#ff8d8d", margin: 0 }}>Введите дату в формате ДД.ММ.ГГГГ.</p>}
                         {birthTimeInvalid && <p style={{ color: "#ff8d8d", margin: 0 }}>Введите время в формате HH:MM (например, 18:30).</p>}
                         {birthCityInvalid && <p style={{ color: "#ff8d8d", margin: 0 }}>Укажите корректный город рождения (минимум 2 буквы).</p>}
+
                         <button className="btn btnPrimary" type="submit" disabled={!canSubmit || status === "loading"}>
                             {status === "loading" ? "Рассчитываем..." : "Получить благоприятные дни"}
                         </button>
-                        {status === "loading" && (
+
+                        {status === "loading" ? (
                             <div className="favorableDaysLoading">
                                 <span className="favorableDaysSpinner" />
                                 <span>{loadingLabels[loadingStepIndex]}</span>
                             </div>
-                        )}
+                        ) : null}
                     </form>
                 ) : (
                     <div className="favorableDaysSuccess">
@@ -288,6 +377,7 @@ export default function FavorableDaysMonthPage() {
                                 ? "Готово! Расчёт отправлен на вашу почту."
                                 : "Расчёт готов. Если письмо не отправилось, можно открыть или скачать PDF ниже."}
                         </p>
+
                         {!emailSent && emailError ? (
                             <p style={{ color: "#ff8d8d", margin: 0 }}>
                                 Ошибка отправки письма: {emailError}
@@ -296,12 +386,7 @@ export default function FavorableDaysMonthPage() {
 
                         {pdfUrl ? (
                             <div className="favorableDaysActions">
-                                <a
-                                    href={pdfUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="btn btnPrimary"
-                                >
+                                <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="btn btnPrimary">
                                     Открыть расчёт
                                 </a>
                                 <a href={pdfUrl} download={pdfFileName} className="btn btnPrimary">
@@ -312,7 +397,7 @@ export default function FavorableDaysMonthPage() {
                     </div>
                 )}
 
-                {status === "error" && <p style={{ color: "#ff8d8d", margin: 0 }}>{errorText}</p>}
+                {status === "error" ? <p style={{ color: "#ff8d8d", margin: 0 }}>{errorText}</p> : null}
             </section>
 
             <style jsx>{`
