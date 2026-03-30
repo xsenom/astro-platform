@@ -12,6 +12,14 @@ type ProfileRow = {
     birth_date?: string | null;
     birth_time?: string | null;
     birth_city?: string | null;
+    utm_source?: string | null;
+    utm_medium?: string | null;
+    utm_campaign?: string | null;
+    utm_term?: string | null;
+    utm_content?: string | null;
+    utm_referrer?: string | null;
+    marketing_email_opt_in?: boolean;
+    is_blocked?: boolean;
     created_at?: string | null;
     updated_at: string | null;
 };
@@ -23,6 +31,34 @@ type UserEditorState = {
     birth_date: string;
     birth_time: string;
     birth_city: string;
+    utm_source: string;
+    utm_medium: string;
+    utm_campaign: string;
+    utm_term: string;
+    utm_content: string;
+    utm_referrer: string;
+    marketing_email_opt_in: boolean;
+    is_blocked: boolean;
+};
+
+type UserInsights = {
+    order_stats: {
+        total_orders: number;
+        paid_orders: number;
+        total_revenue_cents: number;
+    };
+    email_stats: {
+        delivered: number;
+        opened: number;
+        clicked: number;
+        unsubscribed: number;
+        failed: number;
+    };
+    recent_email_events: Array<{
+        event_type: string | null;
+        event_status: string | null;
+        created_at: string | null;
+    }>;
 };
 
 type UsersPagination = {
@@ -516,6 +552,8 @@ export default function AdminPage() {
     const [editorCalculations, setEditorCalculations] = useState<EditorCalculationOption[]>([]);
     const [editorCalculationsLoading, setEditorCalculationsLoading] = useState(false);
     const [editorCalcSending, setEditorCalcSending] = useState(false);
+    const [editorInsights, setEditorInsights] = useState<UserInsights | null>(null);
+    const [editorInsightsLoading, setEditorInsightsLoading] = useState(false);
     const [usersPagination, setUsersPagination] = useState<UsersPagination>({
         page: 1,
         pageSize: 50,
@@ -848,11 +886,46 @@ export default function AdminPage() {
         }
     }
 
+    async function loadUserInsights(userId: string) {
+        setEditorInsightsLoading(true);
+
+        try {
+            const token = await getAccessToken();
+            if (!token) {
+                window.location.href = "/login";
+                return;
+            }
+
+            const res = await fetch(`/api/admin/user-insights?userId=${encodeURIComponent(userId)}`, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
+
+            const json = await res.json().catch(() => null);
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || "Не удалось загрузить статистику пользователя.");
+            }
+
+            setEditorInsights({
+                order_stats: json.order_stats ?? { total_orders: 0, paid_orders: 0, total_revenue_cents: 0 },
+                email_stats: json.email_stats ?? { delivered: 0, opened: 0, clicked: 0, unsubscribed: 0, failed: 0 },
+                recent_email_events: Array.isArray(json.recent_email_events) ? json.recent_email_events : [],
+            });
+        } catch (e) {
+            setEditorInsights(null);
+            setEditorError(e instanceof Error ? e.message : "Не удалось загрузить статистику пользователя.");
+        } finally {
+            setEditorInsightsLoading(false);
+        }
+    }
+
     function openUserEditor(profile: ProfileRow) {
         setEditorError(null);
         setEditorMessage(null);
         setEditorCalculations([]);
         setEditorSelectedCalcId("");
+        setEditorInsights(null);
         setEditorState({
             id: profile.id,
             email: profile.email || "",
@@ -860,9 +933,18 @@ export default function AdminPage() {
             birth_date: formatBirthDateForInput(profile.birth_date),
             birth_time: profile.birth_time || "",
             birth_city: profile.birth_city || "",
+            utm_source: profile.utm_source || "",
+            utm_medium: profile.utm_medium || "",
+            utm_campaign: profile.utm_campaign || "",
+            utm_term: profile.utm_term || "",
+            utm_content: profile.utm_content || "",
+            utm_referrer: profile.utm_referrer || "",
+            marketing_email_opt_in: profile.marketing_email_opt_in !== false,
+            is_blocked: profile.is_blocked === true,
         });
         setEditorOpen(true);
         void loadUserCalculations(profile.id);
+        void loadUserInsights(profile.id);
     }
 
 
@@ -874,6 +956,7 @@ export default function AdminPage() {
         setEditorState(null);
         setEditorSelectedCalcId("");
         setEditorCalculations([]);
+        setEditorInsights(null);
     }
 
     async function saveUserEditor() {
@@ -907,6 +990,14 @@ export default function AdminPage() {
                     birth_date: normalizedBirthDate,
                     birth_time: editorState.birth_time.trim() || null,
                     birth_city: editorState.birth_city.trim() || null,
+                    utm_source: editorState.utm_source.trim() || null,
+                    utm_medium: editorState.utm_medium.trim() || null,
+                    utm_campaign: editorState.utm_campaign.trim() || null,
+                    utm_term: editorState.utm_term.trim() || null,
+                    utm_content: editorState.utm_content.trim() || null,
+                    utm_referrer: editorState.utm_referrer.trim() || null,
+                    marketing_email_opt_in: editorState.marketing_email_opt_in,
+                    is_blocked: editorState.is_blocked,
                 }),
             });
 
@@ -926,6 +1017,14 @@ export default function AdminPage() {
                 birth_date: formatBirthDateForInput(profile.birth_date),
                 birth_time: profile.birth_time || "",
                 birth_city: profile.birth_city || "",
+                utm_source: profile.utm_source || "",
+                utm_medium: profile.utm_medium || "",
+                utm_campaign: profile.utm_campaign || "",
+                utm_term: profile.utm_term || "",
+                utm_content: profile.utm_content || "",
+                utm_referrer: profile.utm_referrer || "",
+                marketing_email_opt_in: profile.marketing_email_opt_in !== false,
+                is_blocked: profile.is_blocked === true,
             });
 
             setEditorMessage("Изменения сохранены.");
@@ -1787,6 +1886,60 @@ export default function AdminPage() {
                                 style={editorInputStyle}
                             />
                         </label>
+
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                            <label style={{ display: "grid", gap: 6 }}>
+                                <span style={{ fontSize: 12, opacity: 0.75 }}>UTM source</span>
+                                <input value={editorState.utm_source} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_source: e.target.value } : prev))} style={editorInputStyle} />
+                            </label>
+                            <label style={{ display: "grid", gap: 6 }}>
+                                <span style={{ fontSize: 12, opacity: 0.75 }}>UTM medium</span>
+                                <input value={editorState.utm_medium} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_medium: e.target.value } : prev))} style={editorInputStyle} />
+                            </label>
+                            <label style={{ display: "grid", gap: 6 }}>
+                                <span style={{ fontSize: 12, opacity: 0.75 }}>UTM campaign</span>
+                                <input value={editorState.utm_campaign} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_campaign: e.target.value } : prev))} style={editorInputStyle} />
+                            </label>
+                            <label style={{ display: "grid", gap: 6 }}>
+                                <span style={{ fontSize: 12, opacity: 0.75 }}>UTM term</span>
+                                <input value={editorState.utm_term} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_term: e.target.value } : prev))} style={editorInputStyle} />
+                            </label>
+                            <label style={{ display: "grid", gap: 6 }}>
+                                <span style={{ fontSize: 12, opacity: 0.75 }}>UTM content</span>
+                                <input value={editorState.utm_content} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_content: e.target.value } : prev))} style={editorInputStyle} />
+                            </label>
+                        </div>
+
+                        <label style={{ display: "grid", gap: 6 }}>
+                            <span style={{ fontSize: 12, opacity: 0.75 }}>UTM referrer</span>
+                            <input value={editorState.utm_referrer} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_referrer: e.target.value } : prev))} style={editorInputStyle} />
+                        </label>
+
+                        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <input type="checkbox" checked={editorState.marketing_email_opt_in} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, marketing_email_opt_in: e.target.checked } : prev))} />
+                                <span style={{ fontSize: 13 }}>Подписан на рассылку</span>
+                            </label>
+                            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <input type="checkbox" checked={editorState.is_blocked} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, is_blocked: e.target.checked } : prev))} />
+                                <span style={{ fontSize: 13 }}>Пользователь заблокирован</span>
+                            </label>
+                        </div>
+
+                        <div style={{ display: "grid", gap: 10, padding: 14, borderRadius: 16, border: "1px solid rgba(224,197,143,.14)", background: "rgba(10,18,38,.22)" }}>
+                            <div style={{ fontWeight: 900 }}>Статистика пользователя</div>
+                            {editorInsightsLoading && <div style={{ opacity: 0.7, fontSize: 12 }}>Загружаем статистику...</div>}
+                            {!editorInsightsLoading && editorInsights && (
+                                <>
+                                    <div style={{ fontSize: 13 }}>
+                                        Покупки: {editorInsights.order_stats.paid_orders} оплачено из {editorInsights.order_stats.total_orders}, выручка {(editorInsights.order_stats.total_revenue_cents / 100).toFixed(2)} ₽
+                                    </div>
+                                    <div style={{ fontSize: 13 }}>
+                                        Письма: доставлено {editorInsights.email_stats.delivered}, открыто {editorInsights.email_stats.opened}, кликов {editorInsights.email_stats.clicked}, отписок {editorInsights.email_stats.unsubscribed}, ошибок {editorInsights.email_stats.failed}
+                                    </div>
+                                </>
+                            )}
+                        </div>
 
                         <div
                             style={{
