@@ -181,8 +181,7 @@ export default function UranGuideLeadPage() {
                     {status === "success" && (
                         <div className="uranGuideSuccess">
                             <p className="uranGuideSuccessText">
-                                Готово! Мы также продублировали путеводитель на почту{" "}
-                                {email.trim()}.Проверьте папку спам.
+                                Готово! Путеводитель доступен по кнопкам ниже.
                             </p>
 
                             <div className="uranGuideActions">

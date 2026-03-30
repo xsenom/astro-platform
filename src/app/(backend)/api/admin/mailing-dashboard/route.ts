@@ -8,21 +8,45 @@ function toDayKey(value: string | null | undefined) {
     return new Date(value).toISOString().slice(0, 10);
 }
 
+function isSchemaError(message: string) {
+    const text = String(message || "").toLowerCase();
+    return text.includes("does not exist") || text.includes("column") || text.includes("relation");
+}
+
 export async function GET(req: NextRequest) {
     const admin = await getAdminAuth(req);
     if (!admin) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
     const db = getAdminClient();
 
-    const [campaignsRes, guideReqRes, guideUnsubRes, deliveryRes] = await Promise.all([
-        db
+    const campaignsRes = await db
+        .from("email_campaigns")
+        .select("id, created_at, subject, status, recipients_count, sent_count, failed_count, opened_count, clicked_count, unsubscribed_count")
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+    let campaigns = campaignsRes.data ?? [];
+    if (campaignsRes.error) {
+        const legacyRes = await db
             .from("email_campaigns")
-            .select("id, created_at, subject, status, recipients_count, sent_count, failed_count, opened_count, clicked_count, unsubscribed_count")
+            .select("id, created_at, subject, status, recipients_count, sent_count, failed_count")
             .order("created_at", { ascending: false })
-            .limit(50),
-        db
-            .from("marketing_guide_requests")
-            .select("created_at, status, email_sent"),
+            .limit(50);
+
+        if (legacyRes.error) {
+            return NextResponse.json({ ok: false, error: legacyRes.error.message }, { status: 500 });
+        }
+
+        campaigns = (legacyRes.data ?? []).map((row) => ({
+            ...row,
+            opened_count: 0,
+            clicked_count: 0,
+            unsubscribed_count: 0,
+        }));
+    }
+
+    const [guideReqRes, guideUnsubRes, deliveryRes] = await Promise.all([
+        db.from("marketing_guide_requests").select("created_at, status, email_sent"),
         db
             .from("marketing_contacts")
             .select("id", { head: true, count: "exact" })
@@ -35,12 +59,12 @@ export async function GET(req: NextRequest) {
             .limit(5000),
     ]);
 
-    if (campaignsRes.error) return NextResponse.json({ ok: false, error: campaignsRes.error.message }, { status: 500 });
-    if (guideReqRes.error) return NextResponse.json({ ok: false, error: guideReqRes.error.message }, { status: 500 });
     if (deliveryRes.error) return NextResponse.json({ ok: false, error: deliveryRes.error.message }, { status: 500 });
+    if (guideReqRes.error && !isSchemaError(guideReqRes.error.message)) {
+        return NextResponse.json({ ok: false, error: guideReqRes.error.message }, { status: 500 });
+    }
 
-    const campaigns = campaignsRes.data ?? [];
-    const guideRows = guideReqRes.data ?? [];
+    const guideRows = guideReqRes.error ? [] : guideReqRes.data ?? [];
     const deliveryRows = deliveryRes.data ?? [];
 
     const emailTotals = {
@@ -60,11 +84,13 @@ export async function GET(req: NextRequest) {
         return acc;
     }, {});
 
+    const unsubscribedTotal = guideUnsubRes.error ? 0 : guideUnsubRes.count ?? 0;
+
     const guideTotals = {
         requested_total: guideRows.length,
         sent_total: guideRows.filter((row) => row.status === "sent" || row.email_sent === true).length,
         failed_total: guideRows.filter((row) => row.status === "failed").length,
-        unsubscribed_total: guideUnsubRes.count ?? 0,
+        unsubscribed_total: unsubscribedTotal,
     };
 
     const guideByDayMap = new Map<string, { day: string; requested: number; sent: number; failed: number }>();
