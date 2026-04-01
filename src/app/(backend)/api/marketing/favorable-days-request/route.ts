@@ -247,8 +247,8 @@ async function readBannerAsDataUri() {
                 ext === ".png"
                     ? "image/png"
                     : ext === ".jpg" || ext === ".jpeg"
-                      ? "image/jpeg"
-                      : "application/octet-stream";
+                        ? "image/jpeg"
+                        : "application/octet-stream";
 
             return `data:${mime};base64,${file.toString("base64")}`;
         } catch {
@@ -561,7 +561,7 @@ export async function POST(req: NextRequest) {
         const normalizedBirthDate = toIsoBirthDate(birthDate);
         const [birthYear, birthMonth, birthDay] = normalizedBirthDate.split("-").map(Number);
         const [birthHour, birthMinute] = birthTime.split(":").map(Number);
-        
+
         const nowIso = new Date().toISOString();
         const { data: inserted, error: insertError } = await admin
             .from("favorable_days_requests")
@@ -574,7 +574,7 @@ export async function POST(req: NextRequest) {
                 months: safeMonths,
                 status: "requested",
                 email_sent: false,
-        
+
                 consent_personal_data: consentPersonalData,
                 consent_ads: consentAds,
                 consent_personal_data_at: consentPersonalData ? nowIso : null,
@@ -676,7 +676,7 @@ export async function POST(req: NextRequest) {
             getEnv("NEXT_PUBLIC_SITE_URL") ||
             getEnv("SITE_URL") ||
             "https://starstalking.ru";
-        
+
         const favorableDaysPageUrl = `${siteUrl.replace(/\/$/, "")}/blagopriyatnye-dni-na-mesyac`;
 
         const pdf = await buildFavorableDaysPdf({
@@ -691,24 +691,24 @@ export async function POST(req: NextRequest) {
         const storageBucket = "marketing-pdfs";
         const safeEmail = email.replace(/[^a-z0-9@._-]/gi, "_");
         const pdfPath = `favorable-days/${new Date().toISOString().slice(0, 10)}/${safeEmail}/${Date.now()}_${pdf.fileName}`;
-        
+
         const { error: uploadError } = await admin.storage
             .from(storageBucket)
             .upload(pdfPath, pdf.content, {
                 contentType: "application/pdf",
                 upsert: false,
             });
-        
+
         if (uploadError) {
             throw new Error(`Не удалось сохранить PDF в Supabase Storage: ${uploadError.message}`);
         }
-        
+
         const { data: publicPdf } = admin.storage
             .from(storageBucket)
             .getPublicUrl(pdfPath);
-        
+
         const pdfUrl = publicPdf?.publicUrl || null;
-        
+
         if (requestId) {
             await admin
                 .from("favorable_days_requests")
@@ -721,13 +721,13 @@ export async function POST(req: NextRequest) {
                 })
                 .eq("id", requestId);
         }
-        
+
         if (!pdfUrl) {
             throw new Error("Не удалось получить публичную ссылку на PDF.");
         }
         const ATTACHMENT_LIMIT_BYTES = 1024 * 1024 * 1.5;
 
-        
+
         const shouldAttachPdf = pdf.content.length <= ATTACHMENT_LIMIT_BYTES;
         const smtpHost = getEnv("SMTP_HOST");
         const smtpPort = Number(getEnv("SMTP_PORT") || "0");
@@ -735,13 +735,13 @@ export async function POST(req: NextRequest) {
         const smtpUser = getEnv("SMTP_USER");
         const smtpPass = getEnv("SMTP_PASS");
         const smtpFrom = getEnv("SMTP_FROM");
-        
+
         const mailText =
             `Здравствуйте, ${fullName}!\n\n` +
             `Ваш расчёт «Благоприятные дни на месяц» готов.\n\n` +
             (pdfUrl ? `Открыть PDF:\n${pdfUrl}\n\n` : "") +
             `Хорошего дня!`;
-        
+
         const mailHtml =
             `<div style="font-family:Arial,sans-serif;line-height:1.7;color:#1f2937">` +
             `<p>Здравствуйте, ${escapeHtml(fullName)}!</p>` +
@@ -751,7 +751,7 @@ export async function POST(req: NextRequest) {
                 : "") +
             `<p>Хорошего дня!</p>` +
             `</div>`;
-        
+
         if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !smtpFrom) {
             if (requestId) {
                 await admin
@@ -772,7 +772,7 @@ export async function POST(req: NextRequest) {
         }
 
 
-        
+
         let emailSent = false;
         let emailError: string | null = null;
 
@@ -800,21 +800,21 @@ export async function POST(req: NextRequest) {
                     `</div>`,
                 attachments: shouldAttachPdf
                     ? [
-                          {
-                              filename: pdf.fileName,
-                              content: pdf.content,
-                              contentType: "application/pdf",
-                          },
-                      ]
+                        {
+                            filename: pdf.fileName,
+                            content: pdf.content,
+                            contentType: "application/pdf",
+                        },
+                    ]
                     : [],
             });
-        
+
             emailSent = true;
         } catch (error) {
             emailError = error instanceof Error ? error.message : String(error);
             console.error("[favorable-days] SMTP send failed:", emailError);
         }
-        
+
         if (requestId) {
             await admin
                 .from("favorable_days_requests")
@@ -831,7 +831,7 @@ export async function POST(req: NextRequest) {
                 })
                 .eq("id", requestId);
         }
-        
+
         return NextResponse.json({
             ok: true,
             email_sent: emailSent,
@@ -857,5 +857,5 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({ ok: false, error: message }, { status: 500 });
     }
-  
+
 }

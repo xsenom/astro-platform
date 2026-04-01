@@ -54,7 +54,7 @@ function CalculationsPageContent() {
     const searchParams = useSearchParams();
     const API =
         process.env.NEXT_PUBLIC_ASTRO_API_BASE?.trim() || "http://127.0.0.1:8011";
-    const URANUS_GEMINI_BANNER_PATH = "/banners/uranus-gemini-pdf-banner.jpg";
+    const URANUS_GEMINI_BANNER_PATH = "/banners/uranus-gemini.txt-banner.jpg";
 
     const [profileLoading, setProfileLoading] = useState(true);
     const [profileError, setProfileError] = useState<string | null>(null);
