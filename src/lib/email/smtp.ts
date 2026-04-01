@@ -49,7 +49,11 @@ async function writeAndRead(socket: net.Socket | tls.TLSSocket, command: string,
 }
 
 function toBase64(value: Buffer | string) {
-    return Buffer.isBuffer(value) ? value.toString("base64") : Buffer.from(value, "utf8").toString("base64");
+    const base64 = Buffer.isBuffer(value)
+        ? value.toString("base64")
+        : Buffer.from(value, "utf8").toString("base64");
+
+    return base64.replace(/.{1,76}/g, "$&\r\n");
 }
 
 function buildMessage(params: {

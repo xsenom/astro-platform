@@ -13,6 +13,12 @@ type FavorableDaysResponse = {
     pdf_file_name?: string;
 };
 
+type CitySearchResponse = {
+    ok?: boolean;
+    cities?: string[];
+    error?: string;
+};
+
 function isValidEmail(value: string) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
@@ -40,7 +46,7 @@ function isValidBirthTime(value: string) {
 }
 
 function isValidBirthCity(value: string) {
-    return /^[\p{L}\s-]{2,}$/u.test(value);
+    return /^[\p{L}\s.,()-]{2,}$/u.test(value.trim());
 }
 
 function formatBirthDateInput(value: string) {
@@ -76,7 +82,15 @@ export default function FavorableDaysMonthPage() {
     const [email, setEmail] = useState("");
     const [birthDate, setBirthDate] = useState("");
     const [birthTime, setBirthTime] = useState("");
+    const [birthTimeUnknown, setBirthTimeUnknown] = useState(false);
     const [birthCity, setBirthCity] = useState("");
+
+    const [consentPersonalData, setConsentPersonalData] = useState(false);
+    const [consentAds, setConsentAds] = useState(false);
+
+    const [cityOptions, setCityOptions] = useState<string[]>([]);
+    const [showCityOptions, setShowCityOptions] = useState(false);
+    const [cityLoading, setCityLoading] = useState(false);
 
     const [status, setStatus] = useState<SubmitState>("idle");
     const [errorText, setErrorText] = useState("");
@@ -94,18 +108,32 @@ export default function FavorableDaysMonthPage() {
 
     const emailInvalid = emailValue.length > 0 && !isValidEmail(emailValue);
     const birthDateInvalid = birthDateValue.length > 0 && !isValidBirthDate(birthDateValue);
-    const birthTimeInvalid = birthTimeValue.length > 0 && !isValidBirthTime(birthTimeValue);
+    const birthTimeInvalid =
+        !birthTimeUnknown &&
+        birthTimeValue.length > 0 &&
+        !isValidBirthTime(birthTimeValue);
     const birthCityInvalid = birthCityValue.length > 0 && !isValidBirthCity(birthCityValue);
+    const consentPersonalDataInvalid = !consentPersonalData;
+
+    const hasValidBirthTime = birthTimeUnknown || isValidBirthTime(birthTimeValue);
 
     const canSubmit = useMemo(() => {
         return Boolean(
             fullNameValue &&
-            isValidEmail(emailValue) &&
-            isValidBirthDate(birthDateValue) &&
-            isValidBirthTime(birthTimeValue) &&
-            isValidBirthCity(birthCityValue)
+                isValidEmail(emailValue) &&
+                isValidBirthDate(birthDateValue) &&
+                hasValidBirthTime &&
+                isValidBirthCity(birthCityValue) &&
+                consentPersonalData
         );
-    }, [fullNameValue, emailValue, birthDateValue, birthTimeValue, birthCityValue]);
+    }, [
+        fullNameValue,
+        emailValue,
+        birthDateValue,
+        hasValidBirthTime,
+        birthCityValue,
+        consentPersonalData,
+    ]);
 
     useEffect(() => {
         if (status !== "loading") return;
@@ -125,6 +153,54 @@ export default function FavorableDaysMonthPage() {
         };
     }, [pdfUrl]);
 
+    useEffect(() => {
+        const query = birthCityValue;
+
+        if (query.length < 2) {
+            setCityOptions([]);
+            setShowCityOptions(false);
+            setCityLoading(false);
+            return;
+        }
+
+        const controller = new AbortController();
+        const timer = window.setTimeout(async () => {
+            try {
+                setCityLoading(true);
+
+                const res = await fetch(
+                    `/api/cities/search?q=${encodeURIComponent(query)}`,
+                    {
+                        method: "GET",
+                        signal: controller.signal,
+                        cache: "no-store",
+                    }
+                );
+
+                const json = (await res.json().catch(() => null)) as CitySearchResponse | null;
+
+                if (!res.ok || !json?.ok || !Array.isArray(json.cities)) {
+                    setCityOptions([]);
+                    setShowCityOptions(false);
+                    return;
+                }
+
+                setCityOptions(json.cities);
+                setShowCityOptions(json.cities.length > 0);
+            } catch {
+                setCityOptions([]);
+                setShowCityOptions(false);
+            } finally {
+                setCityLoading(false);
+            }
+        }, 300);
+
+        return () => {
+            controller.abort();
+            window.clearTimeout(timer);
+        };
+    }, [birthCityValue]);
+
     async function onSubmit(e: FormEvent<HTMLFormElement>) {
         e.preventDefault();
 
@@ -135,6 +211,7 @@ export default function FavorableDaysMonthPage() {
         setErrorText("");
         setEmailError("");
         setEmailSent(false);
+        setShowCityOptions(false);
 
         if (pdfUrl) {
             URL.revokeObjectURL(pdfUrl);
@@ -149,9 +226,12 @@ export default function FavorableDaysMonthPage() {
                     full_name: fullNameValue,
                     email: emailValue,
                     birth_date: birthDateValue,
-                    birth_time: birthTimeValue,
+                    birth_time: birthTimeUnknown ? "" : birthTimeValue,
+                    birth_time_unknown: birthTimeUnknown,
                     birth_city: birthCityValue,
                     months: 1,
+                    consent_personal_data: consentPersonalData,
+                    consent_ads: consentAds,
                 }),
             });
 
@@ -200,8 +280,6 @@ export default function FavorableDaysMonthPage() {
             <section className="card ambient favorableDaysCard">
                 <h1 className="h1 favorableDaysTitle">Благоприятные дни на месяц</h1>
 
-
-
                 {status === "idle" || status === "error" ? (
                     <form onSubmit={onSubmit} className="favorableDaysForm">
                         <input
@@ -231,23 +309,123 @@ export default function FavorableDaysMonthPage() {
                             required
                         />
 
-                        <input
-                            className="input"
-                            placeholder="Время рождения (HH:MM)"
-                            value={birthTime}
-                            onChange={(e) => setBirthTime(formatBirthTimeInput(e.target.value))}
-                            inputMode="numeric"
-                            maxLength={5}
-                            required
-                        />
+                        <div className="favorableDaysTimeWrap">
+                            {!birthTimeUnknown ? (
+                                <input
+                                    className="input"
+                                    placeholder="Время рождения (HH:MM)"
+                                    value={birthTime}
+                                    onChange={(e) => {
+                                        setBirthTime(formatBirthTimeInput(e.target.value));
+                                        setBirthTimeUnknown(false);
+                                    }}
+                                    inputMode="numeric"
+                                    maxLength={5}
+                                    required
+                                />
+                            ) : (
+                                <div className="favorableDaysUnknownTimeBox">
+                                    Время рождения неизвестно
+                                </div>
+                            )}
 
-                        <input
-                            className="input"
-                            placeholder="Город рождения"
-                            value={birthCity}
-                            onChange={(e) => setBirthCity(e.target.value)}
-                            required
-                        />
+                            <button
+                                type="button"
+                                className="favorableDaysSecondaryBtn"
+                                onClick={() => {
+                                    if (birthTimeUnknown) {
+                                        setBirthTimeUnknown(false);
+                                    } else {
+                                        setBirthTime("");
+                                        setBirthTimeUnknown(true);
+                                    }
+                                }}
+                            >
+                                {birthTimeUnknown ? "Указать время" : "Не знаю"}
+                            </button>
+                        </div>
+
+                        <div className="favorableDaysCityWrap">
+                            <input
+                                className="input"
+                                placeholder="Город рождения"
+                                value={birthCity}
+                                onChange={(e) => setBirthCity(e.target.value)}
+                                onFocus={() => {
+                                    if (cityOptions.length > 0) {
+                                        setShowCityOptions(true);
+                                    }
+                                }}
+                                required
+                                autoComplete="off"
+                            />
+
+                            {showCityOptions ? (
+                                <div className="favorableDaysCityDropdown">
+                                    {cityLoading ? (
+                                        <div className="favorableDaysCityOption muted">
+                                            Ищем варианты...
+                                        </div>
+                                    ) : cityOptions.length > 0 ? (
+                                        cityOptions.map((city) => (
+                                            <button
+                                                key={city}
+                                                type="button"
+                                                className="favorableDaysCityOption"
+                                                onClick={() => {
+                                                    setBirthCity(city);
+                                                    setShowCityOptions(false);
+                                                }}
+                                            >
+                                                {city}
+                                            </button>
+                                        ))
+                                    ) : (
+                                        <div className="favorableDaysCityOption muted">
+                                            Ничего не найдено
+                                        </div>
+                                    )}
+                                </div>
+                            ) : null}
+                        </div>
+
+                        <div className="favorableDaysConsentBox">
+                            <label className="favorableDaysCheckboxRow">
+                                <input
+                                    type="checkbox"
+                                    checked={consentPersonalData}
+                                    onChange={(e) => setConsentPersonalData(e.target.checked)}
+                                />
+                                <span>
+                                    Я даю согласие на{" "}
+                                    <a
+                                        href="https://ermolina.pro/soglasie_personaliti"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                    >
+                                        обработку персональных данных
+                                    </a>.
+                                </span>
+                            </label>
+
+                            <label className="favorableDaysCheckboxRow">
+                                <input
+                                    type="checkbox"
+                                    checked={consentAds}
+                                    onChange={(e) => setConsentAds(e.target.checked)}
+                                />
+                                <span>
+                                    Я согласен(а) на получение{" "}
+                                    <a
+                                        href="https://ermolina.pro/soglasie"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                    >
+                                        рекламно-информационных сообщений
+                                    </a>.
+                                </span>
+                            </label>
+                        </div>
 
                         {emailInvalid ? (
                             <p className="favorableDaysErrorText">Укажите корректный email.</p>
@@ -261,7 +439,8 @@ export default function FavorableDaysMonthPage() {
 
                         {birthTimeInvalid ? (
                             <p className="favorableDaysErrorText">
-                                Введите время в формате HH:MM, например 18:30.
+                                Введите время в формате HH:MM, например 18:30, или нажмите
+                                «Не знаю».
                             </p>
                         ) : null}
 
@@ -271,7 +450,13 @@ export default function FavorableDaysMonthPage() {
                             </p>
                         ) : null}
 
-                        <button className="btn btnPrimary" type="submit" disabled={!canSubmit}>
+                        
+
+                        <button
+                            className={`btn btnPrimary favorableDaysSubmitBtn ${!canSubmit ? "isDisabled" : ""}`}
+                            type="submit"
+                            disabled={!canSubmit}
+                        >
                             Получить благоприятные дни
                         </button>
                     </form>
@@ -356,20 +541,110 @@ export default function FavorableDaysMonthPage() {
                     margin: 0 auto !important;
                     display: grid !important;
                     gap: 16px !important;
-                    overflow: hidden !important;
+                    overflow: visible !important;
                 }
 
                 .favorableDaysTitle {
                     margin: 0 !important;
                 }
 
-                .favorableDaysSubtitle {
-                    margin: 0 !important;
-                }
-
                 .favorableDaysForm {
                     display: grid !important;
                     gap: 10px !important;
+                }
+
+                .favorableDaysTimeWrap {
+                    display: grid !important;
+                    grid-template-columns: 1fr auto !important;
+                    gap: 10px !important;
+                    align-items: stretch !important;
+                }
+
+                .favorableDaysSecondaryBtn {
+                    min-width: 110px !important;
+                    border-radius: 14px !important;
+                    border: 1px solid rgba(224, 197, 143, 0.24) !important;
+                    background: rgba(255, 255, 255, 0.04) !important;
+                    color: rgba(245, 240, 233, 0.92) !important;
+                    padding: 0 16px !important;
+                    cursor: pointer !important;
+                }
+
+                .favorableDaysCityWrap {
+                    position: relative !important;
+                }
+
+                .favorableDaysCityDropdown {
+                    position: absolute !important;
+                    top: calc(100% + 6px) !important;
+                    left: 0 !important;
+                    right: 0 !important;
+                    z-index: 20 !important;
+                    display: grid !important;
+                    gap: 4px !important;
+                    padding: 6px !important;
+                    border-radius: 14px !important;
+                    border: 1px solid rgba(224, 197, 143, 0.18) !important;
+                    background: rgba(12, 16, 28, 0.98) !important;
+                    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.3) !important;
+                    max-height: 240px !important;
+                    overflow-y: auto !important;
+                }
+
+                .favorableDaysCityOption {
+                    width: 100% !important;
+                    text-align: left !important;
+                    border: 0 !important;
+                    background: transparent !important;
+                    color: rgba(245, 240, 233, 0.92) !important;
+                    padding: 10px 12px !important;
+                    border-radius: 10px !important;
+                    cursor: pointer !important;
+                }
+
+                .favorableDaysCityOption:hover {
+                    background: rgba(255, 255, 255, 0.06) !important;
+                }
+
+                .favorableDaysCityOption.muted {
+                    color: rgba(245, 240, 233, 0.54) !important;
+                    cursor: default !important;
+                }
+
+                .favorableDaysConsentBox {
+                    display: grid !important;
+                    gap: 12px !important;
+                    margin-top: 4px !important;
+                    padding: 16px !important;
+                    border-radius: 18px !important;
+                    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                    background: rgba(255, 255, 255, 0.03) !important;
+                }
+
+                .favorableDaysCheckboxRow {
+                    display: grid !important;
+                    grid-template-columns: 18px 1fr !important;
+                    gap: 12px !important;
+                    align-items: start !important;
+                    color: rgba(245, 240, 233, 0.92) !important;
+                    font-size: 15px !important;
+                    line-height: 1.6 !important;
+                    cursor: pointer !important;
+                }
+
+                .favorableDaysCheckboxRow input {
+                    margin: 3px 0 0 !important;
+                    width: 16px !important;
+                    height: 16px !important;
+                }
+
+                .favorableDaysCheckboxRow a {
+                    color: #e0c58f !important;
+                    text-decoration: none !important;
+                }
+
+                .favorableDaysCheckboxRow a:hover {
+                    text-decoration: underline !important;
                 }
 
                 .favorableDaysLoadingScreen {
@@ -412,10 +687,10 @@ export default function FavorableDaysMonthPage() {
                     height: 104px !important;
                     animation: favorable-days-pulse 2.2s ease-in-out infinite !important;
                     background: radial-gradient(
-                            circle,
-                            rgba(224, 197, 143, 0.16) 0%,
-                            rgba(224, 197, 143, 0.04) 55%,
-                            rgba(224, 197, 143, 0) 100%
+                        circle,
+                        rgba(224, 197, 143, 0.16) 0%,
+                        rgba(224, 197, 143, 0.04) 55%,
+                        rgba(224, 197, 143, 0) 100%
                     ) !important;
                 }
 
@@ -425,8 +700,8 @@ export default function FavorableDaysMonthPage() {
                     border-radius: 999px !important;
                     background: rgba(224, 197, 143, 0.95) !important;
                     box-shadow:
-                            0 0 24px rgba(224, 197, 143, 0.9),
-                            0 0 60px rgba(224, 197, 143, 0.45) !important;
+                        0 0 24px rgba(224, 197, 143, 0.9),
+                        0 0 60px rgba(224, 197, 143, 0.45) !important;
                     animation: favorable-days-glow 1.8s ease-in-out infinite !important;
                 }
 
@@ -559,6 +834,22 @@ export default function FavorableDaysMonthPage() {
                 }
 
                 @media (max-width: 640px) {
+                    .favorableDaysTimeWrap {
+                        grid-template-columns: 1fr !important;
+                    }
+
+                    .favorableDaysSecondaryBtn {
+                        min-height: 46px !important;
+                    }
+
+                    .favorableDaysConsentBox {
+                        padding: 14px !important;
+                    }
+
+                    .favorableDaysCheckboxRow {
+                        font-size: 14px !important;
+                    }
+
                     .favorableDaysLoadingScreen {
                         min-height: 360px !important;
                         padding-top: 18px !important;
@@ -591,6 +882,29 @@ export default function FavorableDaysMonthPage() {
                     .favorableDaysLoadingStep {
                         font-size: 14px !important;
                     }
+                }
+                .favorableDaysSubmitBtn {
+                    transition:
+                        opacity 0.2s ease,
+                        filter 0.2s ease,
+                        transform 0.2s ease,
+                        background 0.2s ease,
+                        border-color 0.2s ease,
+                        color 0.2s ease !important;
+                }
+                
+                .favorableDaysSubmitBtn.isDisabled,
+                .favorableDaysSubmitBtn:disabled {
+                    background: rgba(255, 255, 255, 0.10) !important;
+                    border-color: rgba(255, 255, 255, 0.14) !important;
+                    color: rgba(245, 240, 233, 0.52) !important;
+                    box-shadow: none !important;
+                    cursor: not-allowed !important;
+                    filter: grayscale(0.2) !important;
+                }
+                
+                .favorableDaysSubmitBtn:not(:disabled) {
+                    cursor: pointer !important;
                 }
             `}</style>
         </main>
