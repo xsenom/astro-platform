@@ -11,7 +11,7 @@ const aboutLinks = [
     },
     {
         label: "Согласие на обработку персональных данных",
-        href: "https://ermolina.pro/soglasie_personaliti",
+        href: "https://docs.google.com/document/d/1vaa-MpJi7eL4iwTsLaeJ7nmJBawPBgLNGIEyYw56Xpc/edit?usp=sharing",
     },
     {
         label: "Согласие на получение рекламно-информационных сообщений",
@@ -44,27 +44,7 @@ export default function SiteFooter() {
                                 материалов в удобном личном кабинете.
                             </p>
 
-                            <div className="astroFooterV2__socials">
-                                <a
-                                    className="astroFooterV2__social"
-                                    href="https://t.me/ermolina"
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    aria-label="Telegram"
-                                >
-                                    <Send size={18} />
-                                </a>
-
-                                <a
-                                    className="astroFooterV2__social"
-                                    href="https://wa.me/79990000000"
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    aria-label="WhatsApp"
-                                >
-                                    <MessageCircle size={18} />
-                                </a>
-                            </div>
+                            
                         </div>
 
                         <nav className="astroFooterV2__col" aria-label="Документы">

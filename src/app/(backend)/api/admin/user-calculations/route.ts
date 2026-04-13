@@ -189,9 +189,12 @@ export async function POST(req: NextRequest) {
             .filter(Boolean)
             .join("\n");
 
+        const smtp = getSmtpConfig();
+
         await sendSmtpMail({
-            ...getSmtpConfig(),
-            from,
+            ...smtp,
+            fromEmail: process.env.SMTP_FROM || smtp.username,
+            fromName: process.env.SMTP_FROM_NAME || "Центр прогнозов Татьяны Ермолиной",
             to: email,
             subject,
             text,

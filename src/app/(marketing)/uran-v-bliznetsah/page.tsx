@@ -11,6 +11,9 @@ type UranusGeminiResponse = {
     email_error?: string;
     pdf_base64?: string;
     pdf_file_name?: string;
+    pdf_url?: string;
+    already_exists?: boolean;
+    message?: string;
 };
 
 type CitySearchResponse = {
@@ -99,6 +102,9 @@ export default function UranusGeminiPage() {
     const [pdfUrl, setPdfUrl] = useState("");
     const [pdfFileName, setPdfFileName] = useState("uran-v-bliznetsah.pdf");
     const [loadingStepIndex, setLoadingStepIndex] = useState(0);
+    
+    const [alreadyExists, setAlreadyExists] = useState(false);
+    const [successMessage, setSuccessMessage] = useState("");
 
     const fullNameValue = fullName.trim();
     const emailValue = email.trim();
@@ -211,6 +217,8 @@ export default function UranusGeminiPage() {
         setEmailError("");
         setEmailSent(false);
         setShowCityOptions(false);
+        setAlreadyExists(false);
+        setSuccessMessage("");
 
         if (pdfUrl) {
             URL.revokeObjectURL(pdfUrl);
@@ -236,34 +244,37 @@ export default function UranusGeminiPage() {
             const json = (await res.json().catch(() => null)) as UranusGeminiResponse | null;
 
             console.log("[uranus-gemini][client] API response:", json);
-
+            
             if (!res.ok || !json?.ok) {
                 setStatus("error");
                 setLoadingStepIndex(0);
                 setErrorText(json?.error || "Не удалось сформировать расчёт.");
                 return;
             }
-
+            
+            // здесь успешный ответ
             setEmailSent(json.email_sent === true);
             setEmailError(typeof json.email_error === "string" ? json.email_error : "");
+            setAlreadyExists(json.already_exists === true);
+            setSuccessMessage(typeof json.message === "string" ? json.message : "");
             setPdfFileName(
                 typeof json.pdf_file_name === "string" && json.pdf_file_name.trim()
                     ? json.pdf_file_name.trim()
                     : "uran-v-bliznetsah.pdf"
             );
-
+            
             if (typeof json.pdf_base64 === "string" && json.pdf_base64.length > 0) {
                 const binary = atob(json.pdf_base64);
                 const bytes = new Uint8Array(binary.length);
-
+            
                 for (let i = 0; i < binary.length; i += 1) {
                     bytes[i] = binary.charCodeAt(i);
                 }
-
+            
                 const blob = new Blob([bytes], { type: "application/pdf" });
                 setPdfUrl(URL.createObjectURL(blob));
             }
-
+            
             setStatus("success");
             setLoadingStepIndex(0);
         } catch (error) {
@@ -339,7 +350,7 @@ export default function UranusGeminiPage() {
                                     }
                                 }}
                             >
-                                {birthTimeUnknown ? "Указать время" : "Не знаю"}
+                                {birthTimeUnknown ? "Указать время" : "Не знаю время рождения"}
                             </button>
                         </div>
 
@@ -489,18 +500,22 @@ export default function UranusGeminiPage() {
                 {status === "success" ? (
                     <div className="uranusSuccess">
                         <p className="uranusSuccessText">
-                            {emailSent
-                                ? `Готово! Расчёт отправлен на почту ${emailValue}.`
-                                : "Расчёт готов. Письмо отправить не удалось, но PDF можно открыть или скачать ниже."}
+                            {successMessage
+                                ? successMessage
+                                : alreadyExists
+                                  ? "Вы уже получили расчёт по этому прогнозу, он в вашем личном кабинете и на указанной вами почте. Или обратитесь в техподдержку"
+                                  : emailSent
+                                    ? `Готово! Расчёт отправлен на почту ${emailValue}.`
+                                    : "Расчёт готов. Письмо отправить не удалось, но PDF можно открыть или скачать ниже."}
                         </p>
-
-                        {!emailSent && emailError ? (
+                
+                        {!emailSent && !alreadyExists && emailError ? (
                             <p className="uranusErrorText">
                                 Ошибка отправки письма: {emailError}
                             </p>
                         ) : null}
-
-                        {pdfUrl ? (
+                
+                        {pdfUrl && !alreadyExists ? (
                             <div className="uranusActions">
                                 <a
                                     href={pdfUrl}
@@ -510,7 +525,7 @@ export default function UranusGeminiPage() {
                                 >
                                     Открыть расчёт
                                 </a>
-
+                
                                 <a href={pdfUrl} download={pdfFileName} className="btn btnPrimary">
                                     Скачать расчёт
                                 </a>

@@ -5,22 +5,6 @@ import { supabase } from "@/lib/supabase/client";
 
 type Mode = "signin" | "signup" | "reset";
 
-const PUBLIC_APP_URL = process.env.NEXT_PUBLIC_APP_URL?.trim();
-
-function getResetRedirectUrl() {
-    if (PUBLIC_APP_URL) {
-        return `${PUBLIC_APP_URL.replace(/\/$/, "")}/reset-password`;
-    }
-
-    const origin = window.location.origin;
-
-    if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
-        return "";
-    }
-
-    return `${origin}/reset-password`;
-}
-
 function supabaseErrorRu(message: string, context: "signin" | "signup" | "reset" = "signin") {
     const m = (message || "").toLowerCase().trim();
 
@@ -30,41 +14,22 @@ function supabaseErrorRu(message: string, context: "signin" | "signup" | "reset"
     if (m.includes("password should be at least")) return "Пароль слишком короткий. Минимум 6 символов.";
     if (m.includes("invalid email")) return "Некорректный email.";
     if (m.includes("signup is disabled")) return "Регистрация временно отключена.";
-
-    if (m.includes("too many requests") || m.includes("rate limit")) {
-        return "Слишком много попыток. Попробуйте позже.";
-    }
-
+    if (m.includes("too many requests") || m.includes("rate limit")) return "Слишком много попыток. Попробуйте позже.";
     if (m.includes("email rate limit exceeded")) return "Слишком много писем. Попробуйте позже.";
     if (m.includes("user not found")) return "Пользователь не найден.";
 
-    if (m.includes("database error querying schema")) {
-        return "Ошибка запроса к базе данных. Проверьте настройки Supabase (схема/права доступа) и повторите попытку.";
-    }
-    if (m.includes("database error")) {
-        return "Ошибка базы данных. Проверьте подключение и права доступа в Supabase.";
-    }
-
     if (context === "reset") {
-        if (m.includes("unable to process request")) {
-            return "Не удалось обработать запрос на сброс. Обычно это из-за некорректного Redirect URL или настроек SMTP в Supabase.";
-        }
+        if (m.includes("unable to process request")) return "Не удалось обработать запрос на сброс пароля.";
         if (m.includes("redirect") && (m.includes("invalid") || m.includes("not allowed"))) {
-            return "Ссылка для сброса отклонена. Добавьте URL сброса пароля в Supabase Auth → URL Configuration.";
-        }
-        if (m.includes("email") && m.includes("not confirmed")) {
-            return "Email не подтверждён. Подтвердите почту и повторите сброс.";
+            return "Ссылка для сброса отклонена. Проверьте настройки URL.";
         }
         if (m.includes("smtp") || m.includes("send") || m.includes("email") || m.includes("mailer")) {
-            return "Не удалось отправить письмо. Проверьте SMTP и Email settings в Supabase.";
+            return "Не удалось отправить письмо. Проверьте почтовые настройки.";
         }
     }
 
-    if (m.includes("invalid") && m.includes("email")) return "Некорректный email.";
-
-    return "Произошла внутренняя ошибка сервиса авторизации. Проверьте настройки Supabase и попробуйте ещё раз позже.";
+    return "Произошла внутренняя ошибка. Попробуйте ещё раз позже.";
 }
-
 
 function EyeIcon({ open }: { open: boolean }) {
     return open ? (
@@ -95,14 +60,14 @@ type PasswordFieldProps = {
 };
 
 function PasswordField({
-                           label,
-                           value,
-                           onChange,
-                           visible,
-                           onToggleVisible,
-                           autoComplete,
-                           placeholder,
-                       }: PasswordFieldProps) {
+    label,
+    value,
+    onChange,
+    visible,
+    onToggleVisible,
+    autoComplete,
+    placeholder,
+}: PasswordFieldProps) {
     return (
         <label style={{ display: "grid", gap: 6 }}>
             <span className="muted">{label}</span>
@@ -163,20 +128,13 @@ export default function LoginPage() {
     const isSignup = mode === "signup";
     const isReset = mode === "reset";
 
-    // валидность действий
-    const canSignIn = useMemo(() => {
-        return mode === "signin" && !!email && !!password;
-    }, [mode, email, password]);
-
+    const canSignIn = useMemo(() => mode === "signin" && !!email && !!password, [mode, email, password]);
     const canSignUp = useMemo(() => {
         if (mode !== "signup") return false;
         if (!email || !password || !password2) return false;
         return password === password2;
     }, [mode, email, password, password2]);
-
-    const canReset = useMemo(() => {
-        return mode === "reset" && !!email;
-    }, [mode, email]);
+    const canReset = useMemo(() => mode === "reset" && !!email, [mode, email]);
 
     async function signIn() {
         setMsg(null);
@@ -187,7 +145,6 @@ export default function LoginPage() {
         setLoading(false);
 
         if (error) {
-            console.error("[auth:signin]", error);
             setMsg(`Ошибка входа: ${supabaseErrorRu(error.message, "signin")}`);
             return;
         }
@@ -208,7 +165,6 @@ export default function LoginPage() {
         setLoading(false);
 
         if (error) {
-            console.error("[auth:signup]", error);
             setMsg(`Ошибка регистрации: ${supabaseErrorRu(error.message, "signup")}`);
             return;
         }
@@ -225,28 +181,31 @@ export default function LoginPage() {
         setMsg(null);
         setLoading(true);
 
-        const redirectTo = "https://momochitdafog.beget.app/reset-password";
-        console.log("[auth:reset] redirectTo =", redirectTo);
+        try {
+            const res = await fetch("/api/auth/password-reset", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ email }),
+            });
 
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: "https://astroschool.site/reset-password",
-        });
+            const json = await res.json().catch(() => null);
 
-        setLoading(false);
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || "Не удалось отправить письмо для сброса пароля.");
+            }
 
-        if (error) {
-            console.error("[auth:reset]", error);
-            setMsg(`Ошибка сброса пароля: ${supabaseErrorRu(error.message, "reset")}`);
-            return;
+            setMsg("Если email существует — мы отправили письмо для сброса пароля.");
+            setMode("signin");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Не удалось отправить письмо для сброса пароля.";
+            setMsg(`Ошибка сброса пароля: ${supabaseErrorRu(message, "reset")}`);
+        } finally {
+            setLoading(false);
         }
-
-        setMsg("Если email существует — мы отправили письмо для сброса пароля.");
-        setMode("signin");
     }
 
-    // классы вкладок:
-    // - активная вкладка: bright/dim в зависимости от валидности
-    // - неактивная: idle
     const signInTabClass =
         mode === "signin"
             ? `astroTab ${canSignIn ? "astroTab--beigeBright" : "astroTab--beigeDim"}`
@@ -260,7 +219,6 @@ export default function LoginPage() {
     return (
         <div className="shell">
             <div className="window ambient" style={{ maxWidth: 920 }}>
-                {/* TITLEBAR */}
                 <div className="titlebar">
                     <div className="phaseDots" aria-hidden="true">
                         <span className="phaseDot d1" />
@@ -273,7 +231,6 @@ export default function LoginPage() {
                     </div>
                 </div>
 
-                {/* CONTENT */}
                 <div className="content" style={{ gridTemplateColumns: "1fr" }}>
                     <div className="main">
                         <div className="card">
@@ -288,7 +245,6 @@ export default function LoginPage() {
                             </div>
 
                             <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
-                                {/* EMAIL */}
                                 <label style={{ display: "grid", gap: 6 }}>
                                     <span className="muted">Email</span>
                                     <input
@@ -301,7 +257,6 @@ export default function LoginPage() {
                                     />
                                 </label>
 
-                                {/* PASSWORD */}
                                 {!isReset && (
                                     <PasswordField
                                         label="Пароль"
@@ -314,7 +269,6 @@ export default function LoginPage() {
                                     />
                                 )}
 
-                                {/* PASSWORD2 */}
                                 {isSignup && (
                                     <PasswordField
                                         label="Повторите пароль"
@@ -327,7 +281,6 @@ export default function LoginPage() {
                                     />
                                 )}
 
-                                {/* Forgot password link */}
                                 {!isReset && (
                                     <button
                                         type="button"
@@ -358,10 +311,8 @@ export default function LoginPage() {
                                     </button>
                                 )}
 
-                                {/* ACTION BUTTONS */}
                                 {!isReset ? (
                                     <div className="astroTabs">
-                                        {/* ВХОД */}
                                         <button
                                             className={signInTabClass}
                                             type="button"
@@ -369,21 +320,18 @@ export default function LoginPage() {
                                             onClick={() => {
                                                 setMsg(null);
 
-                                                // если мы НЕ в режиме входа — просто переключаем вкладку
                                                 if (mode !== "signin") {
                                                     setMode("signin");
                                                     setPassword2("");
                                                     return;
                                                 }
 
-                                                // если уже в режиме входа — выполняем вход
-                                                if (canSignIn && !loading) signIn();
+                                                if (canSignIn && !loading) void signIn();
                                             }}
                                         >
                                             {loading && mode === "signin" ? "Входим…" : "Вход"}
                                         </button>
 
-                                        {/* РЕГИСТРАЦИЯ */}
                                         <button
                                             className={signUpTabClass}
                                             type="button"
@@ -391,14 +339,12 @@ export default function LoginPage() {
                                             onClick={() => {
                                                 setMsg(null);
 
-                                                // если мы НЕ в режиме регистрации — просто переключаем вкладку
                                                 if (mode !== "signup") {
                                                     setMode("signup");
                                                     return;
                                                 }
 
-                                                // если уже в режиме регистрации — регистрируем
-                                                if (canSignUp && !loading) signUp();
+                                                if (canSignUp && !loading) void signUp();
                                             }}
                                         >
                                             {loading && mode === "signup" ? "Создаём…" : "Регистрация"}
@@ -407,13 +353,11 @@ export default function LoginPage() {
                                 ) : (
                                     <div className="astroTabs">
                                         <button
-                                            className={`astroTab ${
-                                                canReset ? "astroTab--beigeBright" : "astroTab--beigeDim"
-                                            }`}
+                                            className={`astroTab ${canReset ? "astroTab--beigeBright" : "astroTab--beigeDim"}`}
                                             type="button"
                                             disabled={loading || !canReset}
                                             onClick={() => {
-                                                if (canReset && !loading) resetPassword();
+                                                if (canReset && !loading) void resetPassword();
                                             }}
                                         >
                                             {loading ? "Отправляем…" : "Сбросить пароль"}

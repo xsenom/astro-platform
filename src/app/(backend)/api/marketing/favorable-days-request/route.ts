@@ -783,20 +783,35 @@ export async function POST(req: NextRequest) {
                 secure: smtpSecure,
                 username: smtpUser,
                 password: smtpPass,
-                from: smtpFrom,
+                fromEmail: smtpFrom,
+                fromName: getEnv("SMTP_FROM_NAME") || "Центр прогнозов Татьяны Ермолиной",
                 to: email,
                 subject: "Ваши благоприятные дни на месяц",
                 text:
                     `Здравствуйте, ${fullName}!\n\n` +
                     `Ваш расчёт «Благоприятные дни на месяц» готов.\n\n` +
                     `Открыть PDF:\n${pdfUrl}\n\n` +
-                    `Хорошего дня!`,
+                    `Хорошего дня!\n\n` +
+                    `------------------------------\n` +
+                    `ЦЕНТР ПРОГНОЗОВ ТАТЬЯНЫ ЕРМОЛИНОЙ\n` +
+                    `ИП Ермолина Т.Н.\n` +
+                    `ОГРНИП 310618111700022\n` +
+                    `ИНН 300401721008`,
                 html:
                     `<div style="font-family:Arial,sans-serif;line-height:1.7;color:#1f2937">` +
                     `<p>Здравствуйте, ${escapeHtml(fullName)}!</p>` +
                     `<p>Ваш расчёт <strong>«Благоприятные дни на месяц»</strong> готов.</p>` +
                     `<p>Открыть PDF: <a href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener noreferrer">открыть PDF</a></p>` +
                     `<p>Хорошего дня!</p>` +
+                    `<hr style="margin:24px 0;border:none;border-top:1px solid #e5e7eb;" />` +
+                    `<div style="font-size:13px;line-height:1.5;color:#6b7280;">` +
+                    `<p style="margin:0 0 8px 0;"><strong>ЦЕНТР ПРОГНОЗОВ ТАТЬЯНЫ ЕРМОЛИНОЙ</strong></p>` +
+                    `<p style="margin:0;">` +
+                    `ИП Ермолина Т.Н.<br>` +
+                    `ОГРНИП 310618111700022<br>` +
+                    `ИНН 300401721008` +
+                    `</p>` +
+                    `</div>` +
                     `</div>`,
                 attachments: shouldAttachPdf
                     ? [

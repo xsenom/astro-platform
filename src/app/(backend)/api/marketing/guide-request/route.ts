@@ -45,7 +45,7 @@ function getMailerConfig() {
     const user = String(process.env.SMTP_USER || "").trim();
     const pass = String(process.env.SMTP_PASS || "").trim();
     const fromEmail = String(process.env.SMTP_FROM_EMAIL || user).trim();
-    const fromName = String(process.env.SMTP_FROM_NAME || "StarStalking").trim();
+    const fromName = String(process.env.SMTP_FROM_NAME || "Центр прогнозов Татьяны Ермолиной").trim();
     const secure = String(process.env.SMTP_SECURE || "false").trim() === "true";
 
     if (!host || !port || !user || !pass || !fromEmail) {
@@ -112,16 +112,32 @@ async function sendGuideEmail(params: {
           </a>
         </p>
         <p>Хорошего чтения!</p>
+    
+        <hr style="margin:24px 0;border:none;border-top:1px solid #e5e7eb;" />
+    
+        <div style="font-size:13px;line-height:1.5;color:#6b7280;">
+          <p style="margin:0 0 8px 0;"><strong>ЦЕНТР ПРОГНОЗОВ ТАТЬЯНЫ ЕРМОЛИНОЙ</strong></p>
+          <p style="margin:0;">
+            ИП Ермолина Т.Н.<br>
+            ОГРНИП 310618111700022<br>
+            ИНН 300401721008
+          </p>
+        </div>
       </div>
     `;
-
+    
     const text =
         `Здравствуйте, ${recipientName}!\n\n` +
         `Спасибо за интерес к путеводителю «Уран в Близнецах».\n\n` +
         `Мы прикрепили PDF к этому письму.\n` +
         `Открыть путеводитель: ${params.guidePdfUrl}\n\n` +
         `Страница путеводителя: ${params.guidePageUrl}\n\n` +
-        `Хорошего чтения!`;
+        `Хорошего чтения!\n\n` +
+        `------------------------------\n` +
+        `ЦЕНТР ПРОГНОЗОВ ТАТЬЯНЫ ЕРМОЛИНОЙ\n` +
+        `ИП Ермолина Т.Н.\n` +
+        `ОГРНИП 310618111700022\n` +
+        `ИНН 300401721008`;
 
     await transporter.sendMail({
         from: `"${fromName}" <${fromEmail}>`,

@@ -1,6 +1,8 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { supabase } from "@/lib/supabase/client";
+import { useCabinetLoading } from "@/components/cabinet/cabinetLoading";
 
 type SexOption = "female" | "male";
 type GoalOption = "lose" | "maintain" | "gain";
@@ -30,8 +32,6 @@ type BjuResult = {
     bmi: number | null;
     raw: BjuApiResponse | null;
 };
-import { supabase } from "@/lib/supabase/client";
-import { useCabinetLoading } from "@/components/cabinet/cabinetLoading";
 
 type ProfileRow = {
     id: string;
@@ -48,6 +48,10 @@ function toHHMM(v: string | null) {
     return v.slice(0, 5);
 }
 
+async function getAccessToken() {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+}
 
 function getAgeFromBirthDate(value: string) {
     if (!value) return null;
@@ -112,11 +116,11 @@ function isProfileFilled(p: ProfileRow | null) {
 export default function ProfileDataPage() {
     const { startLoading } = useCabinetLoading();
 
-
     const [loading, setLoading] = useState(true);
     const [userEmail, setUserEmail] = useState("");
     const [err, setErr] = useState<string | null>(null);
 
+    const [isAdmin, setIsAdmin] = useState(false);
     const [profile, setProfile] = useState<ProfileRow | null>(null);
 
     const [fullName, setFullName] = useState("");
@@ -135,20 +139,26 @@ export default function ProfileDataPage() {
     const [bjuError, setBjuError] = useState<string | null>(null);
     const [bjuResult, setBjuResult] = useState<BjuResult | null>(null);
 
+    const [citySuggestions, setCitySuggestions] = useState<string[]>([]);
+    const [citySuggestionsOpen, setCitySuggestionsOpen] = useState(false);
+    const [citySuggestionsLoading, setCitySuggestionsLoading] = useState(false);
+    const citySuggestAbortRef = useRef<AbortController | null>(null);
+
     const [canEdit, setCanEdit] = useState(true);
     const [needPay, setNeedPay] = useState(false);
     const [usableOrderId, setUsableOrderId] = useState<string | null>(null);
 
     const filled = useMemo(() => isProfileFilled(profile), [profile]);
-
     const bjuEndpoint = useMemo(() => getBjuEndpoint(), []);
+
+    const effectiveCanEdit = isAdmin || canEdit;
+    const effectiveNeedPay = !isAdmin && needPay;
 
     async function getUsablePaidOrder(kind: "profile_update" | "add_person") {
         const { data: userData } = await supabase.auth.getUser();
         const user = userData.user;
         if (!user) return null;
 
-        // paid = status='paid' ИЛИ paid_at заполнен
         const { data } = await supabase
             .from("orders")
             .select("id")
@@ -160,13 +170,12 @@ export default function ProfileDataPage() {
             .limit(1)
             .maybeSingle();
 
-        return (data as any)?.id ?? null;
+        return (data as { id?: string } | null)?.id ?? null;
     }
 
     async function refreshAccess(prof: ProfileRow | null) {
         const isFilled = isProfileFilled(prof);
 
-        // 1) профиль пустой — всегда можно сохранять бесплатно
         if (!isFilled) {
             setCanEdit(true);
             setNeedPay(false);
@@ -174,8 +183,7 @@ export default function ProfileDataPage() {
             return;
         }
 
-        // 2) профиль заполнен — проверяем бесплатное изменение
-        const freeUsed = Boolean((prof as any)?.free_profile_update_used);
+        const freeUsed = Boolean(prof?.free_profile_update_used);
         if (!freeUsed) {
             setCanEdit(true);
             setNeedPay(false);
@@ -183,7 +191,6 @@ export default function ProfileDataPage() {
             return;
         }
 
-        // 3) бесплатное уже использовано — ищем оплаченный заказ
         const orderId = await getUsablePaidOrder("profile_update");
         if (orderId) {
             setCanEdit(true);
@@ -193,6 +200,24 @@ export default function ProfileDataPage() {
             setCanEdit(false);
             setNeedPay(true);
             setUsableOrderId(null);
+        }
+    }
+
+    async function loadAdminFlag() {
+        try {
+            const token = await getAccessToken();
+            if (!token) return;
+
+            const res = await fetch("/api/admin/me", {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            });
+
+            const json = await res.json().catch(() => null);
+            setIsAdmin(Boolean(res.ok && json?.ok));
+        } catch {
+            setIsAdmin(false);
         }
     }
 
@@ -207,6 +232,7 @@ export default function ProfileDataPage() {
                 window.location.href = "/login";
                 return;
             }
+
             const user = userData.user;
             setUserEmail(user.email ?? "");
 
@@ -240,15 +266,15 @@ export default function ProfileDataPage() {
     }
 
     useEffect(() => {
-        load();
+        void loadAdminFlag();
+        void load();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     async function createPendingGCOrder(kind: "profile_update" | "add_person") {
         setErr(null);
-
-        // если хочешь, чтобы при создании заказа тоже была луна — включаем:
         const doneLoading = startLoading({ message: "Подготавливаем оплату профиля" });
+
         try {
             const { data: userData } = await supabase.auth.getUser();
             const user = userData.user;
@@ -281,9 +307,9 @@ export default function ProfileDataPage() {
                 return null;
             }
 
-            return (data as any).id as string;
+            return (data as { id?: string } | null)?.id ?? null;
         } finally {
-          doneLoading();
+            doneLoading();
         }
     }
 
@@ -305,12 +331,10 @@ export default function ProfileDataPage() {
     async function saveProfile() {
         setSaving(true);
         setErr(null);
-
-        // ✅ пусть луна висит на сохранении тоже
         const doneLoading = startLoading({ message: "Сохраняем данные профиля" });
 
         try {
-            if (!canEdit) {
+            if (!effectiveCanEdit) {
                 setErr("Бесплатное изменение использовано. Для следующего изменения нужна оплата 490 ₽.");
                 return;
             }
@@ -323,9 +347,9 @@ export default function ProfileDataPage() {
             }
 
             const wasFilled = isProfileFilled(profile);
-            const freeUsed = Boolean((profile as any)?.free_profile_update_used);
+            const freeUsed = Boolean(profile?.free_profile_update_used);
 
-            const payload: any = {
+            const payload: Record<string, unknown> = {
                 id: user.id,
                 email: user.email ?? null,
                 full_name: fullName.trim() || null,
@@ -335,8 +359,7 @@ export default function ProfileDataPage() {
                 updated_at: new Date().toISOString(),
             };
 
-            // если это первое изменение после заполнения и бесплатное ещё не использовано — фиксируем
-            if (wasFilled && !freeUsed && !usableOrderId) {
+            if (wasFilled && !freeUsed && !usableOrderId && !isAdmin) {
                 payload.free_profile_update_used = true;
             }
 
@@ -346,14 +369,16 @@ export default function ProfileDataPage() {
                 return;
             }
 
-            // если редактирование было платным — гасим заказ
-            if (usableOrderId) {
-                const { error: cErr } = await supabase
+            if (usableOrderId && !isAdmin) {
+                const { error: consumeError } = await supabase
                     .from("orders")
-                    .update({ consumed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+                    .update({
+                        consumed_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString(),
+                    })
                     .eq("id", usableOrderId);
 
-                if (cErr) {
+                if (consumeError) {
                     setErr("Профиль сохранён, но не удалось погасить оплату. Напиши мне — поправим политику/права.");
                 }
             }
@@ -365,6 +390,51 @@ export default function ProfileDataPage() {
         }
     }
 
+    async function fetchCitySuggestions(query: string) {
+        const q = query.trim();
+
+        if (q.length < 2) {
+            setCitySuggestions([]);
+            setCitySuggestionsOpen(false);
+            return;
+        }
+
+        citySuggestAbortRef.current?.abort();
+        const controller = new AbortController();
+        citySuggestAbortRef.current = controller;
+
+        setCitySuggestionsLoading(true);
+
+        try {
+            const url = new URL("/api/cities/search", window.location.origin);
+            url.searchParams.set("q", q);
+
+            const res = await fetch(url.toString(), {
+                method: "GET",
+                signal: controller.signal,
+                cache: "no-store",
+            });
+
+            const json = await res.json().catch(() => null);
+
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || `HTTP ${res.status}`);
+            }
+
+            const items = Array.isArray(json?.cities)
+                ? json.cities.map((item: unknown) => String(item || "").trim()).filter(Boolean)
+                : [];
+
+            setCitySuggestions(items.slice(0, 8));
+            setCitySuggestionsOpen(items.length > 0);
+        } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") return;
+            setCitySuggestions([]);
+            setCitySuggestionsOpen(false);
+        } finally {
+            setCitySuggestionsLoading(false);
+        }
+    }
 
     async function calculateBju() {
         setBjuLoading(true);
@@ -430,7 +500,6 @@ export default function ProfileDataPage() {
         }
     }
 
-    // ✅ убираем “Загрузка…” — вместо этого луна сверху
     if (loading) return null;
 
     return (
@@ -463,7 +532,23 @@ export default function ProfileDataPage() {
                         Пользователь: {userEmail || "—"}
                     </div>
 
-                    {filled && !Boolean((profile as any)?.free_profile_update_used) && (
+                    {isAdmin && (
+                        <div
+                            style={{
+                                padding: "6px 10px",
+                                borderRadius: 999,
+                                border: "1px solid rgba(120,230,255,.20)",
+                                background: "rgba(120,230,255,.08)",
+                                color: "rgba(245,240,233,.88)",
+                                fontSize: 12,
+                                fontWeight: 800,
+                            }}
+                        >
+                            Режим администратора: редактирование без ограничений
+                        </div>
+                    )}
+
+                    {!isAdmin && filled && !Boolean(profile?.free_profile_update_used) && (
                         <div
                             style={{
                                 padding: "6px 10px",
@@ -479,7 +564,7 @@ export default function ProfileDataPage() {
                         </div>
                     )}
 
-                    {needPay && (
+                    {effectiveNeedPay && (
                         <div
                             style={{
                                 padding: "6px 10px",
@@ -494,6 +579,7 @@ export default function ProfileDataPage() {
                             Требуется оплата 490 ₽
                         </div>
                     )}
+
                     <a
                         href="/cabinet/profile/related"
                         style={{
@@ -513,7 +599,14 @@ export default function ProfileDataPage() {
             </div>
 
             {err && (
-                <div style={{ padding: 16, borderRadius: 18, border: "1px solid rgba(255,110,90,.22)", background: "rgba(255,110,90,.06)" }}>
+                <div
+                    style={{
+                        padding: 16,
+                        borderRadius: 18,
+                        border: "1px solid rgba(255,110,90,.22)",
+                        background: "rgba(255,110,90,.06)",
+                    }}
+                >
                     <div style={{ fontWeight: 900 }}>Ошибка</div>
                     <div style={{ marginTop: 6, color: "rgba(245,240,233,.80)" }}>{err}</div>
                 </div>
@@ -529,7 +622,14 @@ export default function ProfileDataPage() {
             >
                 <div style={{ fontSize: 18, fontWeight: 950 }}>Данные для расчётов</div>
 
-                <div style={{ marginTop: 12, display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
+                <div
+                    style={{
+                        marginTop: 12,
+                        display: "grid",
+                        gap: 12,
+                        gridTemplateColumns: "1fr 1fr",
+                    }}
+                >
                     <div style={{ gridColumn: "1 / -1" }}>
                         <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>Имя</div>
                         <input
@@ -546,7 +646,7 @@ export default function ProfileDataPage() {
                                 color: "rgba(245,240,233,.92)",
                                 outline: "none",
                             }}
-                            disabled={!canEdit || saving}
+                            disabled={!effectiveCanEdit || saving}
                         />
                     </div>
 
@@ -566,7 +666,7 @@ export default function ProfileDataPage() {
                                 color: "rgba(245,240,233,.92)",
                                 outline: "none",
                             }}
-                            disabled={!canEdit || saving}
+                            disabled={!effectiveCanEdit || saving}
                         />
                     </div>
 
@@ -586,15 +686,25 @@ export default function ProfileDataPage() {
                                 color: "rgba(245,240,233,.92)",
                                 outline: "none",
                             }}
-                            disabled={!canEdit || saving}
+                            disabled={!effectiveCanEdit || saving}
                         />
                     </div>
 
-                    <div style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ gridColumn: "1 / -1", position: "relative" }}>
                         <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.8 }}>Город рождения</div>
                         <input
                             value={birthCity}
-                            onChange={(e) => setBirthCity(e.target.value)}
+                            onChange={(e) => {
+                                const value = e.target.value;
+                                setBirthCity(value);
+                                void fetchCitySuggestions(value);
+                            }}
+                            onFocus={() => {
+                                if (citySuggestions.length) setCitySuggestionsOpen(true);
+                            }}
+                            onBlur={() => {
+                                window.setTimeout(() => setCitySuggestionsOpen(false), 150);
+                            }}
                             placeholder="Например: Тюмень"
                             style={{
                                 marginTop: 6,
@@ -606,39 +716,98 @@ export default function ProfileDataPage() {
                                 color: "rgba(245,240,233,.92)",
                                 outline: "none",
                             }}
-                            disabled={!canEdit || saving}
+                            disabled={!effectiveCanEdit || saving}
+                            autoComplete="off"
                         />
+
+                        {citySuggestionsLoading && (
+                            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
+                                Ищем варианты...
+                            </div>
+                        )}
+
+                        {citySuggestionsOpen && citySuggestions.length > 0 && (
+                            <div
+                                style={{
+                                    position: "absolute",
+                                    top: "100%",
+                                    left: 0,
+                                    right: 0,
+                                    marginTop: 6,
+                                    borderRadius: 14,
+                                    border: "1px solid rgba(224,197,143,.14)",
+                                    background: "rgba(8,18,47,.98)",
+                                    boxShadow: "0 16px 40px rgba(0,0,0,.28)",
+                                    overflow: "hidden",
+                                    zIndex: 20,
+                                }}
+                            >
+                                {citySuggestions.map((city) => (
+                                    <button
+                                        key={city}
+                                        type="button"
+                                        onMouseDown={(e) => e.preventDefault()}
+                                        onClick={() => {
+                                            setBirthCity(city);
+                                            setCitySuggestionsOpen(false);
+                                            setCitySuggestions([]);
+                                        }}
+                                        style={{
+                                            width: "100%",
+                                            textAlign: "left",
+                                            padding: "10px 12px",
+                                            border: "none",
+                                            borderBottom: "1px solid rgba(224,197,143,.08)",
+                                            background: "transparent",
+                                            color: "rgba(245,240,233,.92)",
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        {city}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
 
                 <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
                     <button
                         onClick={saveProfile}
-                        disabled={!canEdit || saving}
+                        disabled={!effectiveCanEdit || saving}
                         style={{
                             borderRadius: 14,
                             padding: "12px 14px",
                             border: "1px solid rgba(224,197,143,.20)",
-                            background: canEdit ? "rgba(224,197,143,.12)" : "rgba(17,34,80,.16)",
+                            background: effectiveCanEdit
+                                ? "rgba(224,197,143,.12)"
+                                : "rgba(17,34,80,.16)",
                             color: "rgba(245,240,233,.92)",
                             fontWeight: 950,
-                            cursor: canEdit ? "pointer" : "not-allowed",
+                            cursor: effectiveCanEdit ? "pointer" : "not-allowed",
                         }}
                     >
                         {saving ? "Сохранение…" : "Сохранить"}
                     </button>
 
-                    {needPay && (
+                    {effectiveNeedPay && (
                         <button
                             onClick={async () => {
                                 const localOrderId = await createPendingGCOrder("profile_update");
                                 if (!localOrderId) return;
 
-                                const url = getGetCoursePayUrl({ localOrderId, kind: "profile_update" });
+                                const url = getGetCoursePayUrl({
+                                    localOrderId,
+                                    kind: "profile_update",
+                                });
+
                                 if (!url) {
-                                    alert("Заказ создан (pending), но не задана ссылка GetCourse. Добавь NEXT_PUBLIC_GC_PROFILE_UPDATE_URL в .env.local");
+                                    alert(
+                                        "Заказ создан (pending), но не задана ссылка GetCourse. Добавь NEXT_PUBLIC_GC_PROFILE_UPDATE_URL в .env.local"
+                                    );
                                     return;
                                 }
+
                                 window.location.href = url;
                             }}
                             style={{
@@ -656,10 +825,6 @@ export default function ProfileDataPage() {
                     )}
                 </div>
             </div>
-
-
-
         </div>
     );
 }
-

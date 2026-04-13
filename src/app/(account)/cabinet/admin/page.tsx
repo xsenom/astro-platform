@@ -622,6 +622,11 @@ export default function AdminPage() {
     const [builderState, setBuilderState] = useState<BuilderState>(DEFAULT_BUILDER_STATE);
     const [builderMode, setBuilderMode] = useState<"builder" | "html">("builder");
     const [builderImageName, setBuilderImageName] = useState<string | null>(null);
+    
+    const [citySuggestions, setCitySuggestions] = useState<string[]>([]);
+    const [citySuggestionsOpen, setCitySuggestionsOpen] = useState(false);
+    const [citySuggestionsLoading, setCitySuggestionsLoading] = useState(false);
+    const citySuggestAbortRef = useRef<AbortController | null>(null);
 
     const previewHtml = useMemo(() => buildEmailHtml(builderState), [builderState]);
     const previewText = useMemo(() => buildEmailText(builderState), [builderState]);
@@ -919,6 +924,54 @@ export default function AdminPage() {
             setEditorInsightsLoading(false);
         }
     }
+    
+    async function fetchCitySuggestions(query: string) {
+        const q = query.trim();
+    
+        if (q.length < 2) {
+            setCitySuggestions([]);
+            setCitySuggestionsOpen(false);
+            return;
+        }
+    
+        citySuggestAbortRef.current?.abort();
+        const controller = new AbortController();
+        citySuggestAbortRef.current = controller;
+    
+        setCitySuggestionsLoading(true);
+    
+        try {
+            const url = new URL("/api/cities/search", window.location.origin);
+            url.searchParams.set("q", q);
+    
+            const res = await fetch(url.toString(), {
+                method: "GET",
+                signal: controller.signal,
+                cache: "no-store",
+            });
+    
+            const json = await res.json().catch(() => null);
+    
+            if (!res.ok || !json?.ok) {
+                throw new Error(json?.error || `HTTP ${res.status}`);
+            }
+    
+            const items = Array.isArray(json?.cities)
+                ? json.cities
+                      .map((item: unknown) => String(item || "").trim())
+                      .filter(Boolean)
+                : [];
+    
+            setCitySuggestions(items.slice(0, 8));
+            setCitySuggestionsOpen(items.length > 0);
+        } catch (error) {
+            if (error instanceof Error && error.name === "AbortError") return;
+            setCitySuggestions([]);
+            setCitySuggestionsOpen(false);
+        } finally {
+            setCitySuggestionsLoading(false);
+        }
+    }
 
     function openUserEditor(profile: ProfileRow) {
         setEditorError(null);
@@ -957,6 +1010,9 @@ export default function AdminPage() {
         setEditorSelectedCalcId("");
         setEditorCalculations([]);
         setEditorInsights(null);
+        setCitySuggestions([]);
+        setCitySuggestionsOpen(false);
+        citySuggestAbortRef.current?.abort();
     }
 
     async function saveUserEditor() {
@@ -1794,29 +1850,42 @@ export default function AdminPage() {
                     style={{
                         position: "fixed",
                         inset: 0,
-                        background: "rgba(6,10,20,.72)",
-                        display: "grid",
-                        placeItems: "center",
-                        padding: 20,
                         zIndex: 60,
+                        background: "rgba(4,8,20,.72)",
+                        backdropFilter: "blur(6px)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
                     }}
                 >
                     <div
                         onClick={(e) => e.stopPropagation()}
                         style={{
-                            width: "min(680px, 100%)",
+                            width: "min(980px, calc(100vw - 32px))",
+                            maxHeight: "90vh",
+                            display: "flex",
+                            flexDirection: "column",
+                            overflow: "hidden",
                             borderRadius: 24,
                             border: "1px solid rgba(224,197,143,.14)",
-                            background: "linear-gradient(180deg, rgba(17,26,53,.98), rgba(10,16,34,.98))",
-                            padding: 20,
+                            background: "linear-gradient(180deg, rgba(13,27,74,.98) 0%, rgba(8,18,47,.98) 100%)",
                             boxShadow: "0 24px 80px rgba(0,0,0,.45)",
-                            display: "grid",
-                            gap: 14,
                         }}
                     >
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                        <div
+                            style={{
+                                flexShrink: 0,
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "flex-start",
+                                gap: 12,
+                                padding: 24,
+                                borderBottom: "1px solid rgba(224,197,143,.10)",
+                            }}
+                        >
                             <div>
-                                <div style={{ fontSize: 24, fontWeight: 900 }}>Редактор пользователя</div>
+                                <div style={{ fontSize: 24, fontWeight: 950 }}>Редактор пользователя</div>
                                 <div style={{ opacity: 0.7, fontSize: 12, marginTop: 4 }}>{editorState.id}</div>
                             </div>
                             <button
@@ -1827,171 +1896,262 @@ export default function AdminPage() {
                                 Закрыть
                             </button>
                         </div>
-
-                        {editorError && (
-                            <div style={{ padding: 12, borderRadius: 16, background: "rgba(255,110,90,.08)", border: "1px solid rgba(255,110,90,.22)" }}>
-                                {editorError}
-                            </div>
-                        )}
-
-                        {editorMessage && (
-                            <div style={{ padding: 12, borderRadius: 16, background: "rgba(120,230,255,.08)", border: "1px solid rgba(120,230,255,.22)" }}>
-                                {editorMessage}
-                            </div>
-                        )}
-
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                            <label style={{ display: "grid", gap: 6 }}>
-                                <span style={{ fontSize: 12, opacity: 0.75 }}>Email</span>
-                                <input
-                                    value={editorState.email}
-                                    onChange={(e) => setEditorState((prev) => (prev ? { ...prev, email: e.target.value } : prev))}
-                                    style={editorInputStyle}
-                                />
-                            </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                                <span style={{ fontSize: 12, opacity: 0.75 }}>Имя</span>
-                                <input
-                                    value={editorState.full_name}
-                                    onChange={(e) => setEditorState((prev) => (prev ? { ...prev, full_name: e.target.value } : prev))}
-                                    style={editorInputStyle}
-                                />
-                            </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                                <span style={{ fontSize: 12, opacity: 0.75 }}>Дата рождения</span>
-                                <input
-                                    value={editorState.birth_date}
-                                    onChange={(e) => setEditorState((prev) => (prev ? { ...prev, birth_date: e.target.value } : prev))}
-                                    placeholder="ДД.ММ.ГГГГ"
-                                    inputMode="numeric"
-                                    style={editorInputStyle}
-                                />
-                            </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                                <span style={{ fontSize: 12, opacity: 0.75 }}>Время рождения</span>
-                                <input
-                                    value={editorState.birth_time}
-                                    onChange={(e) => setEditorState((prev) => (prev ? { ...prev, birth_time: e.target.value } : prev))}
-                                    placeholder="HH:MM"
-                                    style={editorInputStyle}
-                                />
-                            </label>
-                        </div>
-
-                        <label style={{ display: "grid", gap: 6 }}>
-                            <span style={{ fontSize: 12, opacity: 0.75 }}>Город рождения</span>
-                            <input
-                                value={editorState.birth_city}
-                                onChange={(e) => setEditorState((prev) => (prev ? { ...prev, birth_city: e.target.value } : prev))}
-                                style={editorInputStyle}
-                            />
-                        </label>
-
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                            <label style={{ display: "grid", gap: 6 }}>
-                                <span style={{ fontSize: 12, opacity: 0.75 }}>UTM source</span>
-                                <input value={editorState.utm_source} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_source: e.target.value } : prev))} style={editorInputStyle} />
-                            </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                                <span style={{ fontSize: 12, opacity: 0.75 }}>UTM medium</span>
-                                <input value={editorState.utm_medium} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_medium: e.target.value } : prev))} style={editorInputStyle} />
-                            </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                                <span style={{ fontSize: 12, opacity: 0.75 }}>UTM campaign</span>
-                                <input value={editorState.utm_campaign} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_campaign: e.target.value } : prev))} style={editorInputStyle} />
-                            </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                                <span style={{ fontSize: 12, opacity: 0.75 }}>UTM term</span>
-                                <input value={editorState.utm_term} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_term: e.target.value } : prev))} style={editorInputStyle} />
-                            </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                                <span style={{ fontSize: 12, opacity: 0.75 }}>UTM content</span>
-                                <input value={editorState.utm_content} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_content: e.target.value } : prev))} style={editorInputStyle} />
-                            </label>
-                        </div>
-
-                        <label style={{ display: "grid", gap: 6 }}>
-                            <span style={{ fontSize: 12, opacity: 0.75 }}>UTM referrer</span>
-                            <input value={editorState.utm_referrer} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_referrer: e.target.value } : prev))} style={editorInputStyle} />
-                        </label>
-
-                        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-                            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <input type="checkbox" checked={editorState.marketing_email_opt_in} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, marketing_email_opt_in: e.target.checked } : prev))} />
-                                <span style={{ fontSize: 13 }}>Подписан на рассылку</span>
-                            </label>
-                            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <input type="checkbox" checked={editorState.is_blocked} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, is_blocked: e.target.checked } : prev))} />
-                                <span style={{ fontSize: 13 }}>Пользователь заблокирован</span>
-                            </label>
-                        </div>
-
-                        <div style={{ display: "grid", gap: 10, padding: 14, borderRadius: 16, border: "1px solid rgba(224,197,143,.14)", background: "rgba(10,18,38,.22)" }}>
-                            <div style={{ fontWeight: 900 }}>Статистика пользователя</div>
-                            {editorInsightsLoading && <div style={{ opacity: 0.7, fontSize: 12 }}>Загружаем статистику...</div>}
-                            {!editorInsightsLoading && editorInsights && (
-                                <>
-                                    <div style={{ fontSize: 13 }}>
-                                        Покупки: {editorInsights.order_stats.paid_orders} оплачено из {editorInsights.order_stats.total_orders}, выручка {(editorInsights.order_stats.total_revenue_cents / 100).toFixed(2)} ₽
-                                    </div>
-                                    <div style={{ fontSize: 13 }}>
-                                        Письма: доставлено {editorInsights.email_stats.delivered}, открыто {editorInsights.email_stats.opened}, кликов {editorInsights.email_stats.clicked}, отписок {editorInsights.email_stats.unsubscribed}, ошибок {editorInsights.email_stats.failed}
-                                    </div>
-                                </>
-                            )}
-                        </div>
-
+            
                         <div
                             style={{
+                                flex: "1 1 auto",
+                                minHeight: 0,
+                                overflowY: "auto",
+                                padding: 24,
                                 display: "grid",
-                                gap: 10,
-                                padding: 14,
-                                borderRadius: 16,
-                                border: "1px solid rgba(224,197,143,.14)",
-                                background: "rgba(10,18,38,.22)",
+                                gap: 16,
                             }}
                         >
-                            <div style={{ fontWeight: 900 }}>Отправить готовый расчёт клиенту</div>
-                            <div style={{ fontSize: 12, opacity: 0.75 }}>
-                                Сначала показываем уже сохранённые прогнозы для бесплатной мгновенной отправки. Если сохранённого прогноза нет, можно выбрать существующий расчёт и поставить его в очередь на повторную бесплатную отправку.
+                            {editorError && (
+                                <div style={{ padding: 12, borderRadius: 16, background: "rgba(255,110,90,.08)", border: "1px solid rgba(255,110,90,.22)" }}>
+                                    {editorError}
+                                </div>
+                            )}
+            
+                            {editorMessage && (
+                                <div style={{ padding: 12, borderRadius: 16, background: "rgba(120,230,255,.08)", border: "1px solid rgba(120,230,255,.22)" }}>
+                                    {editorMessage}
+                                </div>
+                            )}
+            
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                                <label style={{ display: "grid", gap: 6 }}>
+                                    <span style={{ fontSize: 12, opacity: 0.75 }}>Email</span>
+                                    <input
+                                        value={editorState.email}
+                                        onChange={(e) => setEditorState((prev) => (prev ? { ...prev, email: e.target.value } : prev))}
+                                        style={editorInputStyle}
+                                    />
+                                </label>
+                                <label style={{ display: "grid", gap: 6 }}>
+                                    <span style={{ fontSize: 12, opacity: 0.75 }}>Имя</span>
+                                    <input
+                                        value={editorState.full_name}
+                                        onChange={(e) => setEditorState((prev) => (prev ? { ...prev, full_name: e.target.value } : prev))}
+                                        style={editorInputStyle}
+                                    />
+                                </label>
+                                <label style={{ display: "grid", gap: 6 }}>
+                                    <span style={{ fontSize: 12, opacity: 0.75 }}>Дата рождения</span>
+                                    <input
+                                        value={editorState.birth_date}
+                                        onChange={(e) => setEditorState((prev) => (prev ? { ...prev, birth_date: e.target.value } : prev))}
+                                        placeholder="ДД.ММ.ГГГГ"
+                                        inputMode="numeric"
+                                        style={editorInputStyle}
+                                    />
+                                </label>
+                                <label style={{ display: "grid", gap: 6 }}>
+                                    <span style={{ fontSize: 12, opacity: 0.75 }}>Время рождения</span>
+                                    <input
+                                        value={editorState.birth_time}
+                                        onChange={(e) => setEditorState((prev) => (prev ? { ...prev, birth_time: e.target.value } : prev))}
+                                        placeholder="HH:MM"
+                                        style={editorInputStyle}
+                                    />
+                                </label>
                             </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
-                                <select
-                                    value={editorSelectedCalcId}
-                                    onChange={(e) => setEditorSelectedCalcId(e.target.value)}
-                                    disabled={editorCalcSending || editorCalculationsLoading || !editorAvailableCalcs.length}
+            
+                            <label style={{ display: "grid", gap: 6, position: "relative" }}>
+                                <span style={{ fontSize: 12, opacity: 0.75 }}>Город рождения</span>
+                            
+                                <input
+                                    value={editorState.birth_city}
+                                    onChange={(e) => {
+                                        const value = e.target.value;
+                                        setEditorState((prev) => (prev ? { ...prev, birth_city: value } : prev));
+                                        void fetchCitySuggestions(value);
+                                    }}
+                                    onFocus={() => {
+                                        if (citySuggestions.length) setCitySuggestionsOpen(true);
+                                    }}
+                                    onBlur={() => {
+                                        window.setTimeout(() => setCitySuggestionsOpen(false), 150);
+                                    }}
+                                    autoComplete="off"
                                     style={editorInputStyle}
-                                >
-                                    {!editorAvailableCalcs.length ? (
-                                        <option value="">
-                                            {editorCalculationsLoading ? "Загружаем прогнозы..." : "Нет доступных прогнозов"}
-                                        </option>
-                                    ) : (
-                                        editorAvailableCalcs.map((calc) => (
-                                            <option key={calc.id} value={calc.id}>
-                                                {getCalculationLabel(String(calc.kind || ""))}
-                                                {calc.source === "saved" ? " • сохранён" : " • из очереди"}
-                                                {calc.target_date ? ` • ${calc.target_date}` : ""}
-                                                {calc.updated_at ? ` • ${new Date(calc.updated_at).toLocaleDateString("ru-RU")}` : ""}
+                                    placeholder="Начните вводить город"
+                                />
+                            
+                                {citySuggestionsLoading && (
+                                    <div style={{ fontSize: 12, opacity: 0.65 }}>Ищем варианты...</div>
+                                )}
+                            
+                                {citySuggestionsOpen && citySuggestions.length > 0 && (
+                                    <div
+                                        style={{
+                                            position: "absolute",
+                                            top: "100%",
+                                            left: 0,
+                                            right: 0,
+                                            marginTop: 6,
+                                            borderRadius: 14,
+                                            border: "1px solid rgba(224,197,143,.14)",
+                                            background: "rgba(8,18,47,.98)",
+                                            boxShadow: "0 16px 40px rgba(0,0,0,.28)",
+                                            overflow: "hidden",
+                                            zIndex: 20,
+                                        }}
+                                    >
+                                        {citySuggestions.map((city) => (
+                                            <button
+                                                key={city}
+                                                type="button"
+                                                onMouseDown={(e) => e.preventDefault()}
+                                                onClick={() => {
+                                                    setEditorState((prev) => (prev ? { ...prev, birth_city: city } : prev));
+                                                    setCitySuggestionsOpen(false);
+                                                    setCitySuggestions([]);
+                                                }}
+                                                style={{
+                                                    width: "100%",
+                                                    textAlign: "left",
+                                                    padding: "10px 12px",
+                                                    border: "none",
+                                                    borderBottom: "1px solid rgba(224,197,143,.08)",
+                                                    background: "transparent",
+                                                    color: "rgba(245,240,233,.92)",
+                                                    cursor: "pointer",
+                                                }}
+                                            >
+                                                {city}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </label>
+            
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                                <label style={{ display: "grid", gap: 6 }}>
+                                    <span style={{ fontSize: 12, opacity: 0.75 }}>UTM source</span>
+                                    <input value={editorState.utm_source} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_source: e.target.value } : prev))} style={editorInputStyle} />
+                                </label>
+                                <label style={{ display: "grid", gap: 6 }}>
+                                    <span style={{ fontSize: 12, opacity: 0.75 }}>UTM medium</span>
+                                    <input value={editorState.utm_medium} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_medium: e.target.value } : prev))} style={editorInputStyle} />
+                                </label>
+                                <label style={{ display: "grid", gap: 6 }}>
+                                    <span style={{ fontSize: 12, opacity: 0.75 }}>UTM campaign</span>
+                                    <input value={editorState.utm_campaign} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_campaign: e.target.value } : prev))} style={editorInputStyle} />
+                                </label>
+                                <label style={{ display: "grid", gap: 6 }}>
+                                    <span style={{ fontSize: 12, opacity: 0.75 }}>UTM term</span>
+                                    <input value={editorState.utm_term} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_term: e.target.value } : prev))} style={editorInputStyle} />
+                                </label>
+                                <label style={{ display: "grid", gap: 6 }}>
+                                    <span style={{ fontSize: 12, opacity: 0.75 }}>UTM content</span>
+                                    <input value={editorState.utm_content} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_content: e.target.value } : prev))} style={editorInputStyle} />
+                                </label>
+                            </div>
+            
+                            <label style={{ display: "grid", gap: 6 }}>
+                                <span style={{ fontSize: 12, opacity: 0.75 }}>UTM referrer</span>
+                                <input value={editorState.utm_referrer} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, utm_referrer: e.target.value } : prev))} style={editorInputStyle} />
+                            </label>
+            
+                            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <input type="checkbox" checked={editorState.marketing_email_opt_in} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, marketing_email_opt_in: e.target.checked } : prev))} />
+                                    <span style={{ fontSize: 13 }}>Подписан на рассылку</span>
+                                </label>
+                                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <input type="checkbox" checked={editorState.is_blocked} onChange={(e) => setEditorState((prev) => (prev ? { ...prev, is_blocked: e.target.checked } : prev))} />
+                                    <span style={{ fontSize: 13 }}>Пользователь заблокирован</span>
+                                </label>
+                            </div>
+            
+                            <div
+                                style={{
+                                    display: "grid",
+                                    gap: 10,
+                                    padding: 14,
+                                    borderRadius: 16,
+                                    border: "1px solid rgba(224,197,143,.14)",
+                                    background: "rgba(10,18,38,.22)",
+                                }}
+                            >
+                                <div style={{ fontWeight: 900 }}>Статистика пользователя</div>
+                                {editorInsightsLoading && <div style={{ opacity: 0.7, fontSize: 12 }}>Загружаем статистику...</div>}
+                                {!editorInsightsLoading && editorInsights && (
+                                    <>
+                                        <div style={{ fontSize: 13 }}>
+                                            Покупки: {editorInsights.order_stats.paid_orders} оплачено из {editorInsights.order_stats.total_orders}, выручка {(editorInsights.order_stats.total_revenue_cents / 100).toFixed(2)} ₽
+                                        </div>
+                                        <div style={{ fontSize: 13 }}>
+                                            Письма: доставлено {editorInsights.email_stats.delivered}, открыто {editorInsights.email_stats.opened}, кликов {editorInsights.email_stats.clicked}, отписок {editorInsights.email_stats.unsubscribed}, ошибок {editorInsights.email_stats.failed}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+            
+                            <div
+                                style={{
+                                    display: "grid",
+                                    gap: 10,
+                                    padding: 14,
+                                    borderRadius: 16,
+                                    border: "1px solid rgba(224,197,143,.14)",
+                                    background: "rgba(10,18,38,.22)",
+                                }}
+                            >
+                                <div style={{ fontWeight: 900 }}>Отправить готовый расчёт клиенту</div>
+                                <div style={{ fontSize: 12, opacity: 0.75 }}>
+                                    Сначала показываем уже сохранённые прогнозы для бесплатной мгновенной отправки. Если сохранённого прогноза нет, можно выбрать существующий расчёт и поставить его в очередь на повторную бесплатную отправку.
+                                </div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
+                                    <select
+                                        value={editorSelectedCalcId}
+                                        onChange={(e) => setEditorSelectedCalcId(e.target.value)}
+                                        disabled={editorCalcSending || editorCalculationsLoading || !editorAvailableCalcs.length}
+                                        style={editorInputStyle}
+                                    >
+                                        {!editorAvailableCalcs.length ? (
+                                            <option value="">
+                                                {editorCalculationsLoading ? "Загружаем прогнозы..." : "Нет доступных прогнозов"}
                                             </option>
-                                        ))
-                                    )}
-                                </select>
-                                <button
-                                    onClick={() => void sendSelectedCalculation()}
-                                    disabled={!editorSelectedCalcId || editorCalcSending}
-                                    style={actionButtonStyle(
-                                        !editorSelectedCalcId || editorCalcSending,
-                                        "rgba(147,197,114,.12)",
-                                        "1px solid rgba(147,197,114,.24)"
-                                    )}
-                                >
-                                    {editorCalcSending ? "Отправляем..." : "Отправить расчёт"}
-                                </button>
+                                        ) : (
+                                            editorAvailableCalcs.map((calc) => (
+                                                <option key={calc.id} value={calc.id}>
+                                                    {getCalculationLabel(String(calc.kind || ""))}
+                                                    {calc.source === "saved" ? " • сохранён" : " • из очереди"}
+                                                    {calc.target_date ? ` • ${calc.target_date}` : ""}
+                                                    {calc.updated_at ? ` • ${new Date(calc.updated_at).toLocaleDateString("ru-RU")}` : ""}
+                                                </option>
+                                            ))
+                                        )}
+                                    </select>
+                                    <button
+                                        onClick={() => void sendSelectedCalculation()}
+                                        disabled={!editorSelectedCalcId || editorCalcSending}
+                                        style={actionButtonStyle(
+                                            !editorSelectedCalcId || editorCalcSending,
+                                            "rgba(147,197,114,.12)",
+                                            "1px solid rgba(147,197,114,.24)"
+                                        )}
+                                    >
+                                        {editorCalcSending ? "Отправляем..." : "Отправить расчёт"}
+                                    </button>
+                                </div>
                             </div>
                         </div>
-
-                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "space-between" }}>
+            
+                        <div
+                            style={{
+                                flexShrink: 0,
+                                display: "flex",
+                                gap: 10,
+                                flexWrap: "wrap",
+                                justifyContent: "space-between",
+                                padding: 24,
+                                borderTop: "1px solid rgba(224,197,143,.10)",
+                                background: "rgba(6,12,30,.92)",
+                            }}
+                        >
                             <button
                                 onClick={() => void sendPasswordReset()}
                                 disabled={editorSaving || editorResetting || editorCalcSending}
@@ -1999,7 +2159,7 @@ export default function AdminPage() {
                             >
                                 {editorResetting ? "Отправляем..." : "Сбросить пароль"}
                             </button>
-
+            
                             <button
                                 onClick={() => void saveUserEditor()}
                                 disabled={editorSaving || editorResetting || editorCalcSending}

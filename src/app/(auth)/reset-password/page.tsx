@@ -46,7 +46,7 @@ export default function ResetPasswordPage() {
                         <div className="card" style={{ display: "grid", gap: 12 }}>
                             <div className="h1">Новый пароль</div>
                             <div className="muted">
-                                Введите новый пароль. Страница должна быть открыта по ссылке из письма Supabase.
+                                Введите новый пароль. Страница должна быть открыта по ссылке из письма для сброса пароля.
                             </div>
 
                             <label style={{ display: "grid", gap: 6 }}>

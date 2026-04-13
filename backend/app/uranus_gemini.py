@@ -12,7 +12,7 @@ from pytz import AmbiguousTimeError, NonExistentTimeError
 
 app = FastAPI(
     title="Astro Uranus API",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 # ---------------------------------------------------
@@ -20,6 +20,8 @@ app = FastAPI(
 # ---------------------------------------------------
 EPHE_PATH = "/opt/astro-uran/ephe"
 swe.set_ephe_path(EPHE_PATH)
+
+HIGH_LATITUDE_LIMIT = 64.0
 
 OBJECTS = {
     swe.SUN: "☉ Солнце",
@@ -134,6 +136,13 @@ ASPECT_INTERPRETATIONS: Dict[Tuple[str, str], str] = {
 # ---------------------------------------------------
 # Вспомогательные функции
 # ---------------------------------------------------
+def log(message: str, payload: Optional[Dict] = None) -> None:
+    if payload is None:
+        print(f"[astro-uran] {message}")
+    else:
+        print(f"[astro-uran] {message}", payload)
+
+
 def safe_localize(tz, dt: datetime) -> datetime:
     try:
         return tz.localize(dt, is_dst=None)
@@ -149,12 +158,25 @@ def normalize_city_name(city_name: str) -> str:
 
 def get_coordinates(city_name: str) -> Tuple[float, float]:
     geolocator = Nominatim(user_agent="astro_uran_api")
-    location = geolocator.geocode(normalize_city_name(city_name), language="ru")
+    normalized = normalize_city_name(city_name)
+
+    location = geolocator.geocode(normalized, language="ru")
     if not location:
-        location = geolocator.geocode(normalize_city_name(city_name), language="en")
+        location = geolocator.geocode(normalized, language="en")
     if not location:
         raise ValueError(f"Не удалось найти координаты для города: {city_name}")
-    return float(location.latitude), float(location.longitude)
+
+    lat = float(location.latitude)
+    lon = float(location.longitude)
+
+    log("coordinates resolved", {
+        "city_name": city_name,
+        "normalized": normalized,
+        "lat": lat,
+        "lon": lon,
+    })
+
+    return lat, lon
 
 
 def get_timezone_name(lat: float, lon: float) -> str:
@@ -162,17 +184,24 @@ def get_timezone_name(lat: float, lon: float) -> str:
     tz_name = tf.timezone_at(lng=lon, lat=lat)
     if not tz_name:
         raise ValueError("Не удалось определить часовой пояс по координатам")
+
+    log("timezone resolved", {
+        "lat": lat,
+        "lon": lon,
+        "timezone": tz_name,
+    })
+
     return tz_name
 
 
 def get_jd_utc(
-        year: int,
-        month: int,
-        day: int,
-        hour: int,
-        minute: int,
-        lat: float,
-        lon: float,
+    year: int,
+    month: int,
+    day: int,
+    hour: int,
+    minute: int,
+    lat: float,
+    lon: float,
 ) -> float:
     tz_name = get_timezone_name(lat, lon)
     tz = pytz.timezone(tz_name)
@@ -181,13 +210,22 @@ def get_jd_utc(
     utc_dt = safe_localize(tz, local_dt).astimezone(pytz.utc)
 
     decimal_hours = utc_dt.hour + utc_dt.minute / 60 + utc_dt.second / 3600
-    return swe.julday(
+
+    jd = swe.julday(
         utc_dt.year,
         utc_dt.month,
         utc_dt.day,
         decimal_hours,
         swe.GREG_CAL,
     )
+
+    log("julian day calculated", {
+        "local_dt": local_dt.isoformat(),
+        "utc_dt": utc_dt.isoformat(),
+        "jd": jd,
+    })
+
+    return jd
 
 
 def calc_natal_positions(jd_natal: float) -> Dict[str, float]:
@@ -196,12 +234,79 @@ def calc_natal_positions(jd_natal: float) -> Dict[str, float]:
         if name in ALLOWED_NATAL:
             pos, _ = swe.calc_ut(jd_natal, obj)
             natal_positions[name] = pos[0]
+
+    log("natal positions calculated", {
+        "count": len(natal_positions),
+        "objects": list(natal_positions.keys()),
+    })
+
     return natal_positions
 
 
+def detect_house_system(lat: float) -> str:
+    return "Placidus" if abs(lat) <= HIGH_LATITUDE_LIMIT else "Equal"
+
+
+def get_house_system_code(lat: float) -> bytes:
+    return b"P" if abs(lat) <= HIGH_LATITUDE_LIMIT else b"E"
+
+
+def get_latitude_warning(lat: float) -> Optional[str]:
+    if abs(lat) > HIGH_LATITUDE_LIMIT:
+        return (
+            f"Широта {lat:.4f} выше {HIGH_LATITUDE_LIMIT}°. "
+            "Для расчёта домов автоматически использована система Equal вместо Placidus."
+        )
+    return None
+
+
 def calc_houses(jd_natal: float, lat: float, lon: float) -> List[float]:
-    cusps, _ = swe.houses(jd_natal, lat, lon, b"P")
-    return list(cusps)
+    preferred_system_code = get_house_system_code(lat)
+    preferred_system_name = detect_house_system(lat)
+
+    log("house calculation started", {
+        "lat": lat,
+        "lon": lon,
+        "abs_lat": abs(lat),
+        "high_latitude_limit": HIGH_LATITUDE_LIMIT,
+        "preferred_house_system": preferred_system_name,
+        "preferred_house_system_code": preferred_system_code.decode("ascii"),
+    })
+
+    try:
+        cusps, _ = swe.houses(jd_natal, lat, lon, preferred_system_code)
+        cusps_list = list(cusps)
+        if len(cusps_list) >= 12:
+            log("house calculation success", {
+                "used_house_system": preferred_system_name,
+                "cusps_count": len(cusps_list),
+            })
+            return cusps_list[:12]
+    except Exception as e:
+        log("house calculation failed", {
+            "used_house_system": preferred_system_name,
+            "error": str(e),
+        })
+
+    if preferred_system_code != b"E":
+        try:
+            cusps, _ = swe.houses(jd_natal, lat, lon, b"E")
+            cusps_list = list(cusps)
+            if len(cusps_list) >= 12:
+                log("house calculation fallback success", {
+                    "used_house_system": "Equal",
+                    "cusps_count": len(cusps_list),
+                })
+                return cusps_list[:12]
+        except Exception as e:
+            log("house calculation fallback failed", {
+                "used_house_system": "Equal",
+                "error": str(e),
+            })
+
+    raise ValueError(
+        f"Не удалось корректно рассчитать дома для широты {lat:.4f} и долготы {lon:.4f}"
+    )
 
 
 def get_house_for_longitude(lon_deg: float, house_cusps: List[float]) -> int:
@@ -226,8 +331,8 @@ def get_house_for_longitude(lon_deg: float, house_cusps: List[float]) -> int:
 
 
 def collapse_dates_to_periods(
-        dates: List[datetime],
-        max_gap_days: int = 6,
+    dates: List[datetime],
+    max_gap_days: int = 6,
 ) -> List[Tuple[datetime, datetime]]:
     if not dates:
         return []
@@ -269,11 +374,11 @@ def get_sign_index(longitude: float) -> int:
 
 
 def validate_birth_input(
-        year: int,
-        month: int,
-        day: int,
-        hour: int,
-        minute: int,
+    year: int,
+    month: int,
+    day: int,
+    hour: int,
+    minute: int,
 ) -> None:
     datetime(year, month, day, hour, minute)
 
@@ -282,19 +387,33 @@ def validate_birth_input(
 # Основной расчёт
 # ---------------------------------------------------
 def build_uranus_gemini_report(
-        year: int,
-        month: int,
-        day: int,
-        hour: int,
-        minute: int,
-        city_name: str,
-        orb: float = 1.0,
-        step_hours: int = 12,
+    year: int,
+    month: int,
+    day: int,
+    hour: int,
+    minute: int,
+    city_name: str,
+    orb: float = 1.0,
+    step_hours: int = 12,
 ) -> Dict:
     validate_birth_input(year, month, day, hour, minute)
 
     lat, lon = get_coordinates(city_name)
     tz_name = get_timezone_name(lat, lon)
+
+    house_system_name = detect_house_system(lat)
+    latitude_warning = get_latitude_warning(lat)
+
+    log("report build started", {
+        "city": city_name,
+        "lat": lat,
+        "lon": lon,
+        "timezone": tz_name,
+        "house_system": house_system_name,
+        "latitude_warning": latitude_warning,
+        "orb": orb,
+        "step_hours": step_hours,
+    })
 
     jd_natal = get_jd_utc(year, month, day, hour, minute, lat, lon)
     natal_positions = calc_natal_positions(jd_natal)
@@ -313,7 +432,7 @@ def build_uranus_gemini_report(
                 current.day,
                 current.hour + current.minute / 60.0,
                 swe.GREG_CAL,
-                )
+            )
 
             uranus_pos, _ = swe.calc_ut(jd, swe.URANUS)
             uranus_long = uranus_pos[0]
@@ -341,8 +460,8 @@ def build_uranus_gemini_report(
 
     aspect_items = []
     for (aspect_name, natal_name), dates in sorted(
-            hits.items(),
-            key=lambda x: (min(x[1]), x[0][0], x[0][1])
+        hits.items(),
+        key=lambda x: (min(x[1]), x[0][0], x[0][1]),
     ):
         unique_days = sorted({datetime(d.year, d.month, d.day) for d in dates})
         periods = collapse_dates_to_periods(unique_days, max_gap_days=6)
@@ -391,7 +510,7 @@ def build_uranus_gemini_report(
             "Цикл Урана в Близнецах всё равно запускает долгосрочные реформы через мышление, связи, обучение и новые способы жизни."
         )
 
-    return {
+    result = {
         "title": "Уран в Близнецах — индивидуальный цикл реформ на 7 лет",
         "period": "25.04.2026 – 22.05.2033",
         "city": city_name,
@@ -411,13 +530,25 @@ def build_uranus_gemini_report(
             "orb": orb,
             "step_hours": step_hours,
             "ephe_path": EPHE_PATH,
+            "house_system": house_system_name,
+            "high_latitude_limit": HIGH_LATITUDE_LIMIT,
         },
+        "latitude_warning": latitude_warning,
         "main_house": main_house,
         "main_house_theme": GENERAL_HOUSE_THEMES.get(main_house) if main_house else None,
         "main_reforms": main_reforms,
         "aspects": aspect_items,
         "summary": f"Найдено аспектов Урана в Близнецах к натальным планетам: {len(aspect_items)}.",
     }
+
+    log("report build finished", {
+        "city": city_name,
+        "main_house": main_house,
+        "aspects_count": len(aspect_items),
+        "house_system": house_system_name,
+    })
+
+    return result
 
 
 # ---------------------------------------------------
@@ -442,14 +573,14 @@ def health():
 
 @app.get("/uranus_gemini_7y")
 def uranus_gemini_7y(
-        year: int = Query(..., description="Год рождения"),
-        month: int = Query(..., description="Месяц рождения"),
-        day: int = Query(..., description="День рождения"),
-        hour: int = Query(..., description="Час рождения"),
-        minute: int = Query(..., description="Минута рождения"),
-        city_name: str = Query(..., description="Город рождения"),
-        orb: float = Query(1.0, description="Орб аспекта"),
-        step_hours: int = Query(12, description="Шаг сканирования в часах"),
+    year: int = Query(..., description="Год рождения"),
+    month: int = Query(..., description="Месяц рождения"),
+    day: int = Query(..., description="День рождения"),
+    hour: int = Query(..., description="Час рождения"),
+    minute: int = Query(..., description="Минута рождения"),
+    city_name: str = Query(..., description="Город рождения"),
+    orb: float = Query(1.0, description="Орб аспекта"),
+    step_hours: int = Query(12, description="Шаг сканирования в часах"),
 ):
     try:
         result = build_uranus_gemini_report(
@@ -464,6 +595,7 @@ def uranus_gemini_7y(
         )
         return result
     except Exception as e:
+        log("fatal error", {"message": str(e)})
         raise HTTPException(status_code=400, detail=str(e))
 
 
