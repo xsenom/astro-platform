@@ -24,6 +24,8 @@ function normalizeSiteUrl(value: string | null | undefined) {
 
 function getSiteUrl(req: NextRequest) {
     const configured =
+        normalizeSiteUrl(process.env.PASSWORD_RESET_SITE_URL) ||
+        normalizeSiteUrl(process.env.SERVICE_SITE_URL) ||
         normalizeSiteUrl(process.env.NEXT_PUBLIC_SITE_URL) ||
         normalizeSiteUrl(process.env.SITE_URL) ||
         normalizeSiteUrl(process.env.NEXT_PUBLIC_APP_URL);
