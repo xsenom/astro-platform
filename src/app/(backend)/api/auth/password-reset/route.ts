@@ -10,19 +10,34 @@ function normalizeOptional(value: string | null | undefined) {
     return trimmed ? trimmed : null;
 }
 
+function normalizeSiteUrl(value: string | null | undefined) {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) return "";
+    const normalized = raw.replace(/\/$/, "");
+
+    if (normalized.includes("app.astroschool.site")) {
+        return "";
+    }
+
+    return normalized;
+}
+
 function getSiteUrl(req: NextRequest) {
     const configured =
-        process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
-        process.env.SITE_URL?.trim() ||
-        process.env.NEXT_PUBLIC_APP_URL?.trim();
+        normalizeSiteUrl(process.env.PASSWORD_RESET_SITE_URL) ||
+        normalizeSiteUrl(process.env.SERVICE_SITE_URL) ||
+        normalizeSiteUrl(process.env.NEXT_PUBLIC_SITE_URL) ||
+        normalizeSiteUrl(process.env.SITE_URL) ||
+        normalizeSiteUrl(process.env.NEXT_PUBLIC_APP_URL);
 
-    if (configured) return configured.replace(/\/$/, "");
+    if (configured) return configured;
 
     const forwardedHost = req.headers.get("x-forwarded-host")?.trim();
     const forwardedProto = req.headers.get("x-forwarded-proto")?.trim() || "https";
 
     if (forwardedHost) {
-        return `${forwardedProto}://${forwardedHost}`.replace(/\/$/, "");
+        const forwarded = normalizeSiteUrl(`${forwardedProto}://${forwardedHost}`);
+        if (forwarded) return forwarded;
     }
 
     const origin = req.nextUrl.origin;
@@ -30,7 +45,7 @@ function getSiteUrl(req: NextRequest) {
         return "http://localhost:3000";
     }
 
-    return origin.replace(/\/$/, "");
+    return normalizeSiteUrl(origin) || "https://service.astrofuture.site";
 }
 
 export async function POST(req: NextRequest) {

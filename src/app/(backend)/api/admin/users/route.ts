@@ -52,26 +52,40 @@ function normalizeOptional(value: string | null | undefined) {
     return trimmed ? trimmed : null;
 }
 
+function normalizeSiteUrl(value: string | null | undefined) {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) return "";
+    const normalized = raw.replace(/\/$/, "");
+
+    if (normalized.includes("app.astroschool.site")) {
+        return "";
+    }
+
+    return normalized;
+}
+
 function getSiteUrl(req: NextRequest) {
     const configured =
-        process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
-        process.env.SITE_URL?.trim() ||
-        process.env.NEXT_PUBLIC_APP_URL?.trim();
+        normalizeSiteUrl(process.env.PASSWORD_RESET_SITE_URL) ||
+        normalizeSiteUrl(process.env.SERVICE_SITE_URL) ||
+        normalizeSiteUrl(process.env.NEXT_PUBLIC_SITE_URL) ||
+        normalizeSiteUrl(process.env.SITE_URL) ||
+        normalizeSiteUrl(process.env.NEXT_PUBLIC_APP_URL);
 
-    if (configured) return configured.replace(/\/$/, "");
+    if (configured) return configured;
 
     const origin = req.nextUrl.origin;
     if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
         return "";
     }
 
-    return origin.replace(/\/$/, "");
+    return normalizeSiteUrl(origin) || "https://service.astrofuture.site";
 }
 
 function getResetRedirectUrl(req: NextRequest) {
     const siteUrl = getSiteUrl(req);
     if (!siteUrl) return "";
-    return `${siteUrl}/auth/reset-password`;
+    return `${siteUrl}/reset-password`;
 }
 
 export async function GET(req: NextRequest) {
@@ -316,7 +330,12 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
         }
 
-        const actionLink = data.properties?.action_link ?? null;
+        const tokenHash = data.properties?.hashed_token ?? null;
+        const fallbackActionLink = data.properties?.action_link ?? null;
+        const actionLink = tokenHash && redirectTo
+            ? `${redirectTo}?token_hash=${encodeURIComponent(tokenHash)}&type=recovery`
+            : fallbackActionLink;
+
         if (!actionLink) {
             return NextResponse.json(
                 { ok: false, error: "Не удалось сгенерировать ссылку для сброса пароля." },
