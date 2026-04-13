@@ -399,7 +399,7 @@ export default function FavorableDaysMonthPage() {
                                 <span>
                                     Я даю согласие на{" "}
                                     <a
-                                        href="https://ermolina.pro/soglasie_personaliti"
+                                        href="/soglasie-na-obrabotku-personalnyh-dannyh"
                                         target="_blank"
                                         rel="noopener noreferrer"
                                     >

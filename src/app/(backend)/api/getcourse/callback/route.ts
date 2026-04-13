@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!; // НЕ anon!
-const CALLBACK_TOKEN = process.env.GETCOURSE_CALLBACK_TOKEN!;
-
-const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+function getEnv(name: string) {
+    const value = process.env[name];
+    if (!value) throw new Error(`Missing env: ${name}`);
+    return value;
+}
 
 export async function POST(req: NextRequest) {
     try {
+        const callbackToken = getEnv("GETCOURSE_CALLBACK_TOKEN");
         const token = req.nextUrl.searchParams.get("token");
-        if (!token || token !== CALLBACK_TOKEN) {
+        if (!token || token !== callbackToken) {
             return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
         }
 
@@ -28,6 +29,11 @@ export async function POST(req: NextRequest) {
         if (!localOrderId) {
             return NextResponse.json({ ok: false, error: "missing local_order_id" }, { status: 400 });
         }
+
+        const supabaseAdmin = createClient(
+            getEnv("NEXT_PUBLIC_SUPABASE_URL"),
+            getEnv("SUPABASE_SERVICE_ROLE_KEY") // НЕ anon!
+        );
 
         // помечаем заказ оплаченным
         const { error } = await supabaseAdmin
@@ -48,7 +54,8 @@ export async function POST(req: NextRequest) {
         }
 
         return NextResponse.json({ ok: true });
-    } catch (e: any) {
-        return NextResponse.json({ ok: false, error: e?.message ?? "unknown" }, { status: 500 });
+    } catch (e) {
+        const message = e instanceof Error ? e.message : "unknown";
+        return NextResponse.json({ ok: false, error: message }, { status: 500 });
     }
 }
