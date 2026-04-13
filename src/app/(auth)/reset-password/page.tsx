@@ -1,15 +1,56 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 
 export default function ResetPasswordPage() {
+    const searchParams = useSearchParams();
     const [password, setPassword] = useState("");
     const [password2, setPassword2] = useState("");
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
+    const [tokenReady, setTokenReady] = useState(false);
+    const [tokenError, setTokenError] = useState<string | null>(null);
 
     const canSubmit = !!password && password.length >= 6 && password === password2;
+    const tokenHash = searchParams.get("token_hash");
+
+    useEffect(() => {
+        let mounted = true;
+
+        async function verifyRecoveryToken() {
+            if (!tokenHash) {
+                const { data } = await supabase.auth.getSession();
+                if (!mounted) return;
+                if (data.session) {
+                    setTokenReady(true);
+                    return;
+                }
+                setTokenError("Ссылка для сброса пароля недействительна или устарела.");
+                return;
+            }
+
+            const { error } = await supabase.auth.verifyOtp({
+                type: "recovery",
+                token_hash: tokenHash,
+            });
+
+            if (!mounted) return;
+            if (error) {
+                setTokenError("Ссылка для сброса пароля недействительна или устарела.");
+                return;
+            }
+
+            setTokenReady(true);
+        }
+
+        void verifyRecoveryToken();
+
+        return () => {
+            mounted = false;
+        };
+    }, [tokenHash]);
 
     async function saveNewPassword() {
         if (!canSubmit) {
@@ -76,7 +117,7 @@ export default function ResetPasswordPage() {
                             <button
                                 className={`astroTab ${canSubmit && !loading ? "astroTab--beigeBright" : "astroTab--beigeDim"}`}
                                 onClick={saveNewPassword}
-                                disabled={!canSubmit || loading}
+                                disabled={!canSubmit || loading || !tokenReady}
                                 style={{ justifyContent: "center" }}
                             >
                                 {loading ? "Сохраняю…" : "Сохранить новый пароль"}
@@ -86,6 +127,7 @@ export default function ResetPasswordPage() {
                                 Вернуться ко входу
                             </a>
 
+                            {tokenError && <div className="muted">{tokenError}</div>}
                             {msg && <div className="muted">{msg}</div>}
                         </div>
                     </div>
