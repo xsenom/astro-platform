@@ -79,7 +79,7 @@ function getSiteUrl(req: NextRequest) {
         return "";
     }
 
-    return normalizeSiteUrl(origin) || "https://service.astrofuture.site";
+    return normalizeSiteUrl(origin) || "https://starstalking.ru";
 }
 
 function getResetRedirectUrl(req: NextRequest) {

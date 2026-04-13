@@ -45,7 +45,7 @@ function getSiteUrl(req: NextRequest) {
         return "http://localhost:3000";
     }
 
-    return normalizeSiteUrl(origin) || "https://service.astrofuture.site";
+    return normalizeSiteUrl(origin) || "https://starstalking.ru";
 }
 
 export async function POST(req: NextRequest) {
