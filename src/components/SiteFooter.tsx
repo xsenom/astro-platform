@@ -1,4 +1,4 @@
-import { Send, MessageCircle, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
 const aboutLinks = [
     {
@@ -11,7 +11,7 @@ const aboutLinks = [
     },
     {
         label: "Согласие на обработку персональных данных",
-        href: "https://docs.google.com/document/d/1vaa-MpJi7eL4iwTsLaeJ7nmJBawPBgLNGIEyYw56Xpc/edit?usp=sharing",
+        href: "/soglasie-na-obrabotku-personalnyh-dannyh",
     },
     {
         label: "Согласие на получение рекламно-информационных сообщений",

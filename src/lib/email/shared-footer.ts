@@ -5,7 +5,7 @@ const MAILING_REASON =
 
 const PRIVACY_URL = "https://ermolina.pro/politika-konfidentsialnosti";
 const USER_AGREEMENT_URL = "https://ermolina.pro/soglashenie";
-const PERSONAL_DATA_URL = "https://ermolina.pro/soglasie_personaliti";
+const PERSONAL_DATA_URL = "https://starstalking.ru/soglasie-na-obrabotku-personalnyh-dannyh";
 const ADS_CONSENT_URL = "https://ermolina.pro/soglasie";
 const UNSUBSCRIBE_URL =
     "http://service.astrofuture.site/unsubscriptions/c521bdb43cc5598f8e7eef9069c3547dda6b45c3d33b95f4a24f8329f93977f6";
