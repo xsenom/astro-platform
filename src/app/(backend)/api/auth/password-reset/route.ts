@@ -18,6 +18,13 @@ function getSiteUrl(req: NextRequest) {
 
     if (configured) return configured.replace(/\/$/, "");
 
+    const forwardedHost = req.headers.get("x-forwarded-host")?.trim();
+    const forwardedProto = req.headers.get("x-forwarded-proto")?.trim() || "https";
+
+    if (forwardedHost) {
+        return `${forwardedProto}://${forwardedHost}`.replace(/\/$/, "");
+    }
+
     const origin = req.nextUrl.origin;
     if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
         return "http://localhost:3000";
