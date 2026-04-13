@@ -48,7 +48,12 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
         }
 
-        const actionLink = data.properties?.action_link ?? null;
+        const tokenHash = data.properties?.hashed_token ?? null;
+        const fallbackActionLink = data.properties?.action_link ?? null;
+        const actionLink = tokenHash
+            ? `${redirectTo}?token_hash=${encodeURIComponent(tokenHash)}&type=recovery`
+            : fallbackActionLink;
+
         if (!actionLink) {
             return NextResponse.json(
                 { ok: false, error: "Не удалось сгенерировать ссылку для сброса пароля." },
