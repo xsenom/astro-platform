@@ -1,11 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 
 export default function ResetPasswordPage() {
-    const searchParams = useSearchParams();
     const [password, setPassword] = useState("");
     const [password2, setPassword2] = useState("");
     const [loading, setLoading] = useState(false);
@@ -14,7 +12,10 @@ export default function ResetPasswordPage() {
     const [tokenError, setTokenError] = useState<string | null>(null);
 
     const canSubmit = !!password && password.length >= 6 && password === password2;
-    const tokenHash = searchParams.get("token_hash");
+    const tokenHash =
+        typeof window !== "undefined"
+            ? new URLSearchParams(window.location.search).get("token_hash")
+            : null;
 
     useEffect(() => {
         let mounted = true;
